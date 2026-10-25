@@ -2,21 +2,26 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { openCore } from '../src/core.mjs';
 import { runDshProposal, runDshReviewTask } from '../src/dsh.mjs';
 
-const [executable, mode] = process.argv.slice(2);
-if (!executable || !['--check-only', '--run-proposal', '--run-task'].includes(mode)) throw new Error('Usage: node scripts/probe-dsh-task.mjs <DSH executable> <--check-only|--run-proposal|--run-task>');
+const [executable, mode, requestedAccountWorkspace] = process.argv.slice(2);
+if (!executable || !['--check-only', '--run-proposal', '--run-task'].includes(mode)) throw new Error('Usage: node scripts/probe-dsh-task.mjs <DSH executable> <--check-only|--run-proposal|--run-task> [account workspace for --run-task]');
 if (mode === '--check-only') {
   const result = spawnSync(process.execPath, [fileURLToPath(new URL('./probe-dsh-prompt.mjs', import.meta.url)), executable, '--check-only'], { stdio: 'inherit', timeout: 45000, windowsHide: true });
   if (result.error) throw new Error('DSH connection check could not finish');
   process.exit(result.status ?? 1);
 }
-const apiKey = process.env.DEEPSEEK_API_KEY;
-if (!apiKey?.trim()) throw new Error('Set a test-only DEEPSEEK_API_KEY locally before a model diagnostic; do not paste it into chat');
+const apiKey = process.env.DEEPSEEK_API_KEY?.trim() || undefined;
+// --run-proposal remains the optional API-key diagnostic; --run-task runs the
+// full loop on the logged-in account when no key is set.
+if (mode === '--run-proposal' && !apiKey) throw new Error('Set a test-only DEEPSEEK_API_KEY locally before a model diagnostic; do not paste it into chat');
+const accountHome = resolve(process.env.DSH_HOME?.trim() || join(homedir(), '.dsh'));
+const accountWorkspace = resolve(requestedAccountWorkspace ?? 'D:/MYCODE/RCtest');
 if (mode === '--run-task') {
   const login = spawnSync(process.execPath, [fileURLToPath(new URL('./login-codex-review.mjs', import.meta.url)), '--status'], { stdio: 'ignore', timeout: 15000, windowsHide: true });
   if (login.status !== 0) throw new Error('Authorize the dedicated review profile with npm run login:review first');
@@ -31,13 +36,16 @@ const settled = new Promise((done) => { finished = done; });
 try {
   await writeFile(join(root, 'message.txt'), 'pending\n');
   core = await openCore(root, mode === '--run-task' ? async (task, context) => {
-    try { return await runDshReviewTask({ core, task, context, executable, apiKey, authHome }); }
-    finally { finished(); }
+    try {
+      return await runDshReviewTask(apiKey
+        ? { core, task, context, executable, apiKey, authHome }
+        : { core, task, context, executable, accountHome, accountWorkspace, authHome });
+    } finally { finished(); }
   } : null);
   const task = await core.create({ title: 'DSH proposal and independent review diagnostic',
     objective: 'Change message.txt to exactly ready followed by one newline.',
     acceptance: 'Only message.txt changes; its complete contents must be ready\\n.',
-    allowedPaths: ['message.txt'], executionLimits: { maxDurationSeconds: 60, maxModelTurns: 2 } });
+    allowedPaths: ['message.txt'], executionLimits: { maxDurationSeconds: 240, maxModelTurns: 2 } });
   const candidate = await core.prepareWorkspace(task.id);
   if (mode === '--run-proposal') {
     const home = join(root, '.RelayCore', 'dsh-proposal-home');

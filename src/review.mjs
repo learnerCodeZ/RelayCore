@@ -8,7 +8,7 @@ const schema = { type: 'object', properties: {
 }, required: ['verdict', 'rationale'], additionalProperties: false };
 
 export function codexReviewEnvironment(home) {
-  const allowed = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'TEMP', 'TMP']);
+  const allowed = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'TEMP', 'TMP', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']);
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => allowed.has(name.toUpperCase())));
   env.CODEX_HOME = home;
   return env;
@@ -67,7 +67,12 @@ export async function runCodexReview({ review, model, apiKey, authHome, context 
         sessionId = event.thread_id;
         context.recordSession('codex', sessionId);
       }
-      if (event.type === 'error' || event.type === 'turn.failed') throw new Error('Codex review failed');
+      // "Reconnecting..." events are transient retry notices from the native
+      // CLI (the stream types them as errors); only other errors and
+      // turn.failed are terminal for the review.
+      if ((event.type === 'error' && !event.message?.startsWith('Reconnecting')) || event.type === 'turn.failed') {
+        throw new Error(`Codex review failed: ${JSON.stringify(event).slice(0, 500)}`);
+      }
       if (event.item && ['command_execution', 'file_change', 'mcp_tool_call', 'web_search'].includes(event.item.type)) throw new Error('Review attempted a forbidden tool');
       if (event.type === 'item.completed' && event.item?.type === 'agent_message') response = event.item.text;
       if (event.type === 'turn.completed') { completed = true; usage = event.usage; }

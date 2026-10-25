@@ -69,7 +69,9 @@ npm run check:dsh-account
 
 该检查曾连续三次卡在 `session/new` 报 `ACP returned invalid JSON`。根因：安装包内 `dsh-llm-deepseek-account` 插件用 `console.info` 输出模型目录日志，而 Node 的 console 默认写 stdout，与 DSH 自身 `dsh-sdk-jsonrpc-server` "stdout 只允许协议帧"的约定冲突；`session/new` 加载账户插件时污染协议通道。修复：`src/dsh.mjs` 的 `dshAcpArgs()` 统一以 `--import` 预加载 `src/dsh-console-shim.mjs`，把 console 的 log/info/debug/dir 重定向到 stderr；协议本身、严格 JSON 校验与 DSH 安装包均未改动。
 
-2026-10-25 又执行了一次受限真实提案（`scripts/probe-dsh-account.mjs --run-proposal`）并首次成功：`account-proposal-validated-not-applied`——账户模型 `DeepSeek-V4.1-Flash` 恰好 1 轮 prompt 返回精确 JSON 替换提案，无工具/权限事件，源文件复核未变，提案未应用、0 次 SDK 调用，证据落盘 `local/`。`cost` 仍为 unknown：这是单点样本，不构成账户路线稳定性、费用边界或生产接入的结论；完整 DSH→候选→SDK 审查→HANDOFF 闭环尚未运行。
+2026-10-25 又执行了一次受限真实提案（`scripts/probe-dsh-account.mjs --run-proposal`）并首次成功：`account-proposal-validated-not-applied`——账户模型 `DeepSeek-V4.1-Flash` 恰好 1 轮 prompt 返回精确 JSON 替换提案，无工具/权限事件，源文件复核未变，提案未应用、0 次 SDK 调用，证据落盘 `local/`。`cost` 仍为 unknown：这是单点样本，不构成账户路线稳定性、费用边界或生产接入的结论。
+
+同日**完整账户闭环首次成功**：`scripts/probe-dsh-task.mjs --run-task` 在未设置 `DEEPSEEK_API_KEY` 时自动走账户模式（`runDshReviewTask` 传 `accountHome` 与账户工作区，默认 `D:\MYCODE\RCtest`，可用第三个参数覆盖；设置 Key 则保留 Key 模式）。结果 `reviewed-not-merged`：`COMPLETED`、恰好 2 轮（DSH 提案 1 + Codex 审查 1）、双 session、源文件未变、候选更新、`HANDOFF.md` 未合并且含审查快照 SHA-256；总时长预算 240 秒。SDK 侧超时根因（代理剥离 + 重连误判）见 `docs/codex-review.md`。单点成功不构成稳定性或费用结论；生产 Daemon 仍不挂执行器。
 
 ## 已有 API Key 提案诊断：可选通道
 

@@ -145,3 +145,86 @@ test('DSH and independent review share the durable prompt quota', async () => {
   assert.equal(result.source, 'pending\n');
   assert.equal(result.handoff, false);
 });
+
+const fakeAccountDsh = `
+import { createInterface } from 'node:readline';
+const catalog = (currentValue) => [{ id: 'model', category: 'model', type: 'select', currentValue, options: [
+  { group: 'deepseek-official', name: 'DeepSeek Account', options: [{ name: 'API model', value: 'api-choice' }] },
+  { group: 'deepseek-account', name: 'Account', options: [{ name: 'Account Flash', value: 'opaque-account-choice' }] }
+] }];
+createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'session/cancel') return;
+  const send = (value) => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...value})+'\\n');
+  if (message.method === 'session/prompt') {
+    send({method:'session/update',params:{sessionId:'account-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:JSON.stringify({summary:'Set the requested message.',files:[{path:'message.txt',contents:'ready\\n'}]})}}}});
+    send({id:message.id,result:{stopReason:'end_turn'}});
+    return;
+  }
+  if (message.method === 'session/set_config_option') {
+    if (message.params.value !== 'opaque-account-choice') process.exit(3);
+    send({id:message.id,result:{configOptions:catalog(message.params.value)}});
+    return;
+  }
+  send({id:message.id,result: message.method === 'initialize' ? {protocolVersion:1}
+    : {sessionId:'account-session', configOptions:catalog('api-choice')}});
+});`;
+
+test('account-route full loop selects the native model before prompting and never touches the source', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relaycore-account-loop-'));
+  let core;
+  let finish;
+  const settled = new Promise((done) => { finish = done; });
+  try {
+    await writeFile(join(root, 'message.txt'), 'pending\n');
+    const authHome = join(root, 'review-auth');
+    const accountHome = join(root, 'native-home');
+    const accountWorkspace = join(root, 'account-workspace');
+    for (const directory of [authHome, accountHome, accountWorkspace]) await mkdir(directory);
+    await writeFile(join(authHome, 'auth.json'), '{}');
+    const propose = (input) => runDshProposal(input, (command, args, options) => {
+      assert.equal(options.cwd, accountWorkspace);
+      assert.equal(options.env.DSH_HOME, accountHome);
+      assert.equal(options.env.DEEPSEEK_API_KEY, undefined);
+      return openAcpLifecycle(process.execPath, ['--input-type=module', '-e', fakeAccountDsh], { ...options, timeoutMs: 2000 });
+    });
+    const review = async (input) => {
+      const packet = JSON.parse(await readFile(input.review.inputPath, 'utf8'));
+      assert.equal(packet.files[0].after, 'ready\n');
+      class FakeCodex {
+        startThread() {
+          return { async runStreamed() {
+            return { events: (async function* () {
+              yield { type: 'thread.started', thread_id: 'codex-account-test' };
+              yield { type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify({ verdict: 'approved', rationale: 'Exact replacement matches acceptance.' }) } };
+              yield { type: 'turn.completed', usage: { input_tokens: 20, output_tokens: 8 } };
+            })() };
+          } };
+        }
+      }
+      return runCodexReview(input, FakeCodex);
+    };
+    core = await openCore(root, async (task, context) => {
+      try { return await runDshReviewTask({ core, task, context, executable: process.execPath, accountHome, accountWorkspace, authHome }, { propose, review }); }
+      finally { finish(); }
+    });
+    const task = await core.create({ title: 'Account loop', objective: 'Change pending to ready.', acceptance: 'Exact ready newline.',
+      allowedPaths: ['message.txt'], executionLimits: { maxDurationSeconds: 10, maxModelTurns: 2 } });
+    const candidate = await core.prepareWorkspace(task.id);
+    core.dispatch(task.id);
+    await settled;
+    while (core.get(task.id).state === 'RUNNING') await setTimeout(5);
+    const final = core.get(task.id);
+    const events = core.events(task.id).map((event) => event.kind);
+    const handoff = await readFile(join(root, '.RelayCore', '.agent-tasks', task.id, 'HANDOFF.md'), 'utf8');
+    assert.equal(final.state, 'COMPLETED');
+    assert.equal(await readFile(join(root, 'message.txt'), 'utf8'), 'pending\n');
+    assert.equal(await readFile(join(candidate.workspace, 'message.txt'), 'utf8'), 'ready\n');
+    assert.deepEqual(events.filter((kind) => kind.startsWith('model_turn.requested.')), ['model_turn.requested.dsh', 'model_turn.requested.codex']);
+    assert.ok(handoff.includes('account-session') && handoff.includes('codex-account-test'));
+  } finally {
+    core?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+

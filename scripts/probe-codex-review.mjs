@@ -42,7 +42,7 @@ try {
     process.stdout.write(`${JSON.stringify({ sdkLoaded: true, nativeCliLocated: true, reviewPrepared: true, files: 1, modelCalls: 0 })}\n`);
   } else {
     const result = await runCodexReview({ review, model, apiKey, authHome,
-      context: { signal: AbortSignal.timeout(30000),
+      context: { signal: AbortSignal.timeout(120000),
         beginModelTurn(agent) {
           if (++turns > 1) throw new Error('Diagnostic turn limit exceeded');
           writeFileSync(join(root, 'REVIEW-INTENT.json'), JSON.stringify({ taskId: task.id, agent, model: model ?? 'account-default', requestedAt: new Date().toISOString() }), { flag: 'wx' });
@@ -59,8 +59,9 @@ try {
   }
 } catch (error) {
   if (mode === '--check-only') throw error;
-  const outcome = { outcome: ['AbortError', 'TimeoutError'].includes(error.name) ? 'review-inconclusive-timeout-or-cancel' : 'review-not-completed',
-    sessionId: sessionId ?? null, modelCalls: turns, usage: null, cost: 'unknown', externalCancellationConfirmed: false };
+    const outcome = { outcome: ['AbortError', 'TimeoutError'].includes(error.name) ? 'review-inconclusive-timeout-or-cancel' : 'review-not-completed',
+      sessionId: sessionId ?? null, modelCalls: turns, usage: null, cost: 'unknown', externalCancellationConfirmed: false,
+      errorDetail: error.message.slice(0, 500) };
   await writeFile(join(root, 'REVIEW-OUTCOME.json'), JSON.stringify(outcome, null, 2), { flag: 'wx' });
   process.stdout.write(`${JSON.stringify(outcome)}\n`);
   process.exitCode = 1;

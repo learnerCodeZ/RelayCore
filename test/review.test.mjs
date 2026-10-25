@@ -23,18 +23,54 @@ async function withReview(action) {
 
 test('review subprocess environment excludes provider keys and control credentials', () => {
   const names = ['OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_REVIEW_API_KEY', 'DEEPSEEK_API_KEY', 'RELAYCORE_TOKEN', 'CODEX_HOME'];
-  const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  const proxies = ['HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY'];
+  const original = Object.fromEntries([...names, ...proxies].map((name) => [name, process.env[name]]));
   try {
     for (const name of names) process.env[name] = 'test-only-sentinel';
+    for (const name of proxies) process.env[name] = `test-proxy-${name}`;
     const env = codexReviewEnvironment('dedicated-review-home');
     assert.equal(env.CODEX_HOME, 'dedicated-review-home');
     for (const name of names.filter((name) => name !== 'CODEX_HOME')) assert.equal(env[name], undefined);
+    for (const name of proxies) assert.equal(env[name], `test-proxy-${name}`);
   } finally {
-    for (const name of names) {
+    for (const name of [...names, ...proxies]) {
       if (original[name] === undefined) delete process.env[name];
       else process.env[name] = original[name];
     }
   }
+});
+
+test('review tolerates transient reconnect notices but fails on other stream errors', async () => {
+  await withReview(async (input) => {
+    class ReconnectingCodex {
+      startThread() {
+        return { async runStreamed() {
+          return { events: (async function* () {
+            yield { type: 'thread.started', thread_id: 'reconnect-session' };
+            yield { type: 'error', message: 'Reconnecting... 2/5 (request timed out)' };
+            yield { type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify({ verdict: 'rejected', rationale: 'Regression found.' }) } };
+            yield { type: 'turn.completed', usage: { input_tokens: 5, output_tokens: 2 } };
+          })() };
+        } };
+      }
+    }
+    const result = await runCodexReview(input, ReconnectingCodex);
+    assert.equal(result.verdict, 'rejected');
+    assert.equal(result.sessionId, 'reconnect-session');
+  });
+  await withReview(async (input) => {
+    class BrokenCodex {
+      startThread() {
+        return { async runStreamed() {
+          return { events: (async function* () {
+            yield { type: 'thread.started', thread_id: 'broken-session' };
+            yield { type: 'error', message: 'stream disconnected' };
+          })() };
+        } };
+      }
+    }
+    await assert.rejects(runCodexReview(input, BrokenCodex), /Codex review failed/);
+  });
 });
 
 test('review reserves a turn, isolates configuration and accepts a structured verdict with usage', async () => {
