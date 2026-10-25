@@ -67,7 +67,9 @@ npm run check:dsh-account
 
 2026-10-25 实测通过：`account-route-selected`，原生 `session/set_config_option` 确认 `deepseek-account` 分组与模型（本机当前为 `DeepSeek-V4.1-Flash`），`requestedTurns: 0`（零 prompt、零模型调用）。它复用用户已登录的 DSH Home（`DSH_HOME` 或 `%USERPROFILE%\.dsh`），新建独立只读诊断会话，不向既有对话发消息，不读取或复制凭据。
 
-该检查曾连续三次卡在 `session/new` 报 `ACP returned invalid JSON`。根因：安装包内 `dsh-llm-deepseek-account` 插件用 `console.info` 输出模型目录日志，而 Node 的 console 默认写 stdout，与 DSH 自身 `dsh-sdk-jsonrpc-server` "stdout 只允许协议帧"的约定冲突；`session/new` 加载账户插件时污染协议通道。修复：`src/dsh.mjs` 的 `dshAcpArgs()` 统一以 `--import` 预加载 `src/dsh-console-shim.mjs`，把 console 的 log/info/debug/dir 重定向到 stderr；协议本身、严格 JSON 校验与 DSH 安装包均未改动。账号模型推理仍未验证，受限真实提案（`scripts/probe-dsh-account.mjs --run-proposal`）待用户授权后单独执行。
+该检查曾连续三次卡在 `session/new` 报 `ACP returned invalid JSON`。根因：安装包内 `dsh-llm-deepseek-account` 插件用 `console.info` 输出模型目录日志，而 Node 的 console 默认写 stdout，与 DSH 自身 `dsh-sdk-jsonrpc-server` "stdout 只允许协议帧"的约定冲突；`session/new` 加载账户插件时污染协议通道。修复：`src/dsh.mjs` 的 `dshAcpArgs()` 统一以 `--import` 预加载 `src/dsh-console-shim.mjs`，把 console 的 log/info/debug/dir 重定向到 stderr；协议本身、严格 JSON 校验与 DSH 安装包均未改动。
+
+2026-10-25 又执行了一次受限真实提案（`scripts/probe-dsh-account.mjs --run-proposal`）并首次成功：`account-proposal-validated-not-applied`——账户模型 `DeepSeek-V4.1-Flash` 恰好 1 轮 prompt 返回精确 JSON 替换提案，无工具/权限事件，源文件复核未变，提案未应用、0 次 SDK 调用，证据落盘 `local/`。`cost` 仍为 unknown：这是单点样本，不构成账户路线稳定性、费用边界或生产接入的结论；完整 DSH→候选→SDK 审查→HANDOFF 闭环尚未运行。
 
 ## 已有 API Key 提案诊断：可选通道
 
