@@ -1,13 +1,12 @@
 import { access, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { openAcpLifecycle } from '../src/acp.mjs';
+import { dshAcpArgs } from '../src/dsh.mjs';
 
 const executable = process.argv[2];
 if (!executable) throw new Error('Usage: node scripts/probe-dsh-acp.mjs <DSH Desktop executable>');
 await access(executable);
-const desktopRoot = dirname(resolve(executable));
-const cli = join(desktopRoot, 'resources', 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js');
 const dshHome = await mkdtemp(join(tmpdir(), 'relaycore-acp-home-'));
 const workspace = await mkdtemp(join(tmpdir(), 'relaycore-acp-workspace-'));
 
@@ -20,7 +19,7 @@ async function removeProbeDirectory(directory) {
   await rm(actual, { recursive: true, force: true });
 }
 
-const acp = openAcpLifecycle(executable, ['--expose-internals', cli, '--profile', 'acp'], {
+const acp = openAcpLifecycle(executable, dshAcpArgs(executable), {
   cwd: workspace,
   env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOME: dshHome }
 });

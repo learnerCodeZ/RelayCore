@@ -9,6 +9,14 @@ export function dshCliPath(executable) {
     '@deepseek-ai', 'dsh-desktop-host', 'lib', 'cli.js');
 }
 
+// Single source for the DSH ACP launch arguments: the console shim is preloaded
+// before the official CLI so plugin logging goes to stderr while stdout stays
+// reserved for JSON-RPC frames.
+export function dshAcpArgs(executable) {
+  return ['--expose-internals', '--import', new URL('./dsh-console-shim.mjs', import.meta.url).href,
+    dshCliPath(executable), '--profile', 'acp'];
+}
+
 export function dshEnvironment(home, apiKey) {
   const allowed = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PROGRAMDATA', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY']);
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => allowed.has(name.toUpperCase())));
@@ -44,7 +52,7 @@ export async function runDshProposal({ task, files, home, executable, apiKey, ac
   let violation;
   let selection;
   const deny = (message) => { violation = new Error(message); throw violation; };
-  const acp = connect(executable, ['--expose-internals', dshCliPath(executable), '--profile', 'acp'], {
+  const acp = connect(executable, dshAcpArgs(executable), {
     cwd: workspace, env: environment, timeoutMs: 30000,
     onPermissionRequest() { deny('DSH requested a forbidden permission'); },
     onUpdate(params) {

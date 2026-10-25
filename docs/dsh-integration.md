@@ -59,6 +59,16 @@ node .\scripts\probe-dsh-task.mjs 'D:\DeepSeekHarness\DeepSeek Harness.exe' --ch
 
 2026-10-25 本机实测返回 `ACP isolated session: PASS; no model prompt sent`。它不要求 API Key，不派发任务，不修改源项目。
 
+## 账号路线无模型检查
+
+```powershell
+npm run check:dsh-account
+```
+
+2026-10-25 实测通过：`account-route-selected`，原生 `session/set_config_option` 确认 `deepseek-account` 分组与模型（本机当前为 `DeepSeek-V4.1-Flash`），`requestedTurns: 0`（零 prompt、零模型调用）。它复用用户已登录的 DSH Home（`DSH_HOME` 或 `%USERPROFILE%\.dsh`），新建独立只读诊断会话，不向既有对话发消息，不读取或复制凭据。
+
+该检查曾连续三次卡在 `session/new` 报 `ACP returned invalid JSON`。根因：安装包内 `dsh-llm-deepseek-account` 插件用 `console.info` 输出模型目录日志，而 Node 的 console 默认写 stdout，与 DSH 自身 `dsh-sdk-jsonrpc-server` "stdout 只允许协议帧"的约定冲突；`session/new` 加载账户插件时污染协议通道。修复：`src/dsh.mjs` 的 `dshAcpArgs()` 统一以 `--import` 预加载 `src/dsh-console-shim.mjs`，把 console 的 log/info/debug/dir 重定向到 stderr；协议本身、严格 JSON 校验与 DSH 安装包均未改动。账号模型推理仍未验证，受限真实提案（`scripts/probe-dsh-account.mjs --run-proposal`）待用户授权后单独执行。
+
 ## 已有 API Key 提案诊断：可选通道
 
 以下仅供已经选择 API Key 方式的测试，不是账号接入的必做步骤。只有账号的用户暂不执行这段命令，优先验证账号路线。结构化接口不再只要求模型回复 `OK`：一次性样例中 `message.txt` 为 `pending` 加换行，要求返回改成 `ready` 加换行的提案。脚本保存 JSON 并核对准确内容，**不应用提案、不调用 SDK**，任务保持 `DRAFT`。最多一次桥接提示，30 秒取消信号；原生消耗和费用仍需核对。
@@ -85,4 +95,4 @@ try {
 
 `--run-task` 在专用账号已登录、DeepSeek Key 本机可用时，才尝试完整实验任务。显式合约为总时长 60 秒、最多两个桥接提示，调用前意图和会话 ID 写入一次性项目的 SQLite。只有 SDK 独立批准、源文件未变和样例内容匹配，脚本才报告 `reviewed-not-merged`；不直接修改本项目，也不连接正在运行的生产 Daemon。
 
-目前不把它列为已通过项，也没有在 SDK 首次结果未知后自动运行它。模型 Review 不等于执行了项目测试，`COMPLETED` 也只描述实验合约的执行结果，不授权合并。全量无模型测试 43/43 通过仍不能替代真实双模型与安全验收。
+目前不把它列为已通过项，也没有在 SDK 首次结果未知后自动运行它。模型 Review 不等于执行了项目测试，`COMPLETED` 也只描述实验合约的执行结果，不授权合并。全量无模型测试 50/50 通过仍不能替代真实双模型与安全验收。

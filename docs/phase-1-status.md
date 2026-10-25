@@ -1,6 +1,6 @@
 # Phase 1 实现状态
 
-状态：**进行中，未达到 MVP 验收标准**。截至 2026-10-25，已实现本地控制骨架、内部时限/回合守卫、独立验收材料，以及 DSH 数据提案→受控副本写入→SDK Review 的内部组合执行器。无模型测试 43/43 通过。DSH Desktop 的只读拒写、工作区内写入和默认越界拒写，以及 ACP 只读拒写和提示取消各有单点证据。SDK 专用账号已登录，首次真实验收诊断取得线程 ID，但超时未得到结论和用量。完整 Windows 权限边界、提权审批、工具执行中取消、双模型闭环和远端 Git 状态仍未验证。用户要求连续推进，不等于放行未验证的生产自动写入。
+状态：**进行中，未达到 MVP 验收标准**。截至 2026-10-25，已实现本地控制骨架、内部时限/回合守卫、独立验收材料，以及 DSH 数据提案→受控副本写入→SDK Review 的内部组合执行器。无模型测试 50/50 通过（含账户路由与 console shim 测试）；账号路线无模型检查 `npm run check:dsh-account` 通过：原生确认 `deepseek-account` 模型选择、零 prompt。DSH Desktop 的只读拒写、工作区内写入和默认越界拒写，以及 ACP 只读拒写和提示取消各有单点证据。SDK 专用账号已登录，首次真实验收诊断取得线程 ID，但超时未得到结论和用量。账号模型真实推理、完整 Windows 权限边界、提权审批、工具执行中取消、双模型闭环和远端 Git 状态仍未验证。用户要求连续推进，不等于放行未验证的生产自动写入。
 
 ## 已实现与验证
 
@@ -16,7 +16,7 @@
 | 独立验收材料与 SDK 入口 | 原始/候选文本封装为独立 `REVIEW.json`；SDK 入口隔离 home、禁用工具并检查哈希、结构化结论和用量 | 快照/冲突/体积测试、假 SDK 事件测试、原生 CLI 和 `--check-only` 检查；首次真实诊断取得线程 ID 后 30 秒超时，无完成/用量证据，未接生产 Daemon |
 | SDK 独立账号登录入口 | `npm run login:review` 调用随包 CLI 登录，使用专用 home；另支持显式测试 API Key，不读取或复制 Desktop 凭据 | 用户浏览器授权成功后，主机当前用户实测 `authenticated:true`；目录 ACL 已核对仅当前用户和 SYSTEM。缓存登录成功不等于模型可用性已通过 |
 | DSH 数据提案与组合执行器 | DSH 只返回声明文件的完整替换文本；Core 在运行任务中检查范围、基线及停止信号后只写候选，另生成 Review 快照，独立批准后才产生交接 | `test/dsh.test.mjs` 使用真实 ACP 子进程协议、假 DSH 和假 SDK 验证内部成功链及工具/权限/迟到工具、错误会话、无效/越界提案、停止、拒绝与共享额度；新入口的真实 DSH 无模型连接通过，真实提案未测 |
-| DSH 账号认证 | 官方支持 `deepseek-account`，与 API Key 的 `deepseek-official` 分离；用户报告 Desktop 已登录 | 当前 RelayCore 探针仍只实现 Key 模式，账号后台接入与本机资格待验证；不能把探针缺 Key 外推为 DSH 必须使用 API，不要求用户先申请 Key |
+| DSH 账号认证 | 官方支持 `deepseek-account`，与 API Key 的 `deepseek-official` 分离；`src/dsh-account.mjs` 实现账户环境白名单与原生模型选择，账户参数与 API Key 禁止混用 | 2026-10-25 `npm run check:dsh-account` 首次通过（账户插件 stdout 日志污染已由 `--import` 预加载 console shim 修复，重定向到 stderr）：原生确认 `deepseek-account` 分组与模型、0 prompt；账号模型推理与受限真实提案仍未验证 |
 | 非 Git 文件副本与变更清单 | 内部 `prepareWorkspace` 复制声明文件并保存基线；`verifyWorkspace` 检查原样副本；`inspectWorkspaceChanges` 列出副本变化；`inspectSourceConflicts` 对比主项目已声明文件 | 测试覆盖复制范围、目录/链接拒绝、失败清理、副本内容变化、主项目改动/删除、缺失/额外项、超限文件和基线不匹配；未接入 Daemon/MCP/DSH，不是 OS 沙箱或独立验收 |
 | 状态与停止 | 草稿/排队任务可取消；运行任务停止立即标为 `RECOVERY_REQUIRED`，发 AbortSignal，禁止新回合或迟到结果完成 | 注入测试执行器测试；不是实际 DSH 取消能力的证明；不响应取消的执行器未结束前仍占用串行队列 |
 | 崩溃恢复 | 启动时把遗留 `RUNNING` 转为 `RECOVERY_REQUIRED`，不自动重播 | 手工模拟遗留状态的测试 |

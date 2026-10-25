@@ -2,7 +2,7 @@ import { access, lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openAcpLifecycle } from '../src/acp.mjs';
-import { dshCliPath, dshEnvironment } from '../src/dsh.mjs';
+import { dshAcpArgs, dshEnvironment } from '../src/dsh.mjs';
 
 const executable = process.argv[2];
 const mode = process.argv[3];
@@ -13,7 +13,6 @@ if (mode !== '--check-only' && !process.env.DEEPSEEK_API_KEY) {
   throw new Error('Set a test-only DEEPSEEK_API_KEY in this terminal before a model probe; do not paste it into chat.');
 }
 await access(executable);
-const cli = dshCliPath(executable);
 const probeRoot = join(dirname(fileURLToPath(import.meta.url)), '..', 'local');
 await mkdir(probeRoot, { recursive: true });
 const home = await mkdtemp(join(probeRoot, 'relaycore-prompt-home-'));
@@ -42,7 +41,7 @@ async function clean(directory) {
 }
 
 try {
-  acp = openAcpLifecycle(executable, ['--expose-internals', cli, '--profile', 'acp'], {
+  acp = openAcpLifecycle(executable, dshAcpArgs(executable), {
     cwd: workspace, timeoutMs: 30000,
     env: environment,
     onPermissionRequest() { permissionRequests++; },

@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openAcpLifecycle } from '../src/acp.mjs';
-import { dshCliPath, runDshProposal } from '../src/dsh.mjs';
+import { dshAcpArgs, runDshProposal } from '../src/dsh.mjs';
 import { dshAccountEnvironment, selectAccountModel } from '../src/dsh-account.mjs';
 import { writeFileSync } from 'node:fs';
 
@@ -27,7 +27,7 @@ let outcome;
 let stage = 'preparing';
 try {
   if (mode === '--check-only') {
-    acp = openAcpLifecycle(executable, ['--expose-internals', dshCliPath(executable), '--profile', 'acp'], {
+    acp = openAcpLifecycle(executable, dshAcpArgs(executable), {
       cwd: workspace, env: dshAccountEnvironment(accountHome), timeoutMs: 20000,
       onPermissionRequest() { throw new Error('Unexpected permission during account check'); }
     });
