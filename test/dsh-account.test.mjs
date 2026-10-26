@@ -74,6 +74,7 @@ test('account proposal confirms the native model before reserving a prompt and r
             onUpdate({ sessionId: 'account-session', update: { sessionUpdate: 'agent_message_chunk', content: {
               type: 'text', text: JSON.stringify({ summary: 'Ready.', files: [{ path: 'message.txt', contents: 'ready\n' }] })
             } } });
+            onUpdate({ sessionId: 'account-session', update: { sessionUpdate: 'usage_update', cost: { total: 21 } } });
             return { stopReason: 'end_turn' };
           },
           async closeSession() { calls.push('close-session'); },
@@ -89,6 +90,7 @@ test('account proposal confirms the native model before reserving a prompt and r
         const result = await runDshProposal(input, connect);
         assert.equal(result.provider, 'deepseek-account');
         assert.equal(result.model, 'Account Flash');
+        assert.deepEqual(result.usage, { sessionUpdate: 'usage_update', cost: { total: 21 } });
         assert.deepEqual(calls, ['record-session', 'select', 'reserve', 'prompt', 'close-session', 'close']);
       } else {
         await assert.rejects(runDshProposal(input, connect), /unavailable/);

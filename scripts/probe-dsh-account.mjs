@@ -71,7 +71,7 @@ try {
     assert.deepEqual(proposal.files, [{ path, contents: 'probe-account-success\n' }]);
     assert.equal(await readFile(source, 'utf8'), before);
     outcome = { outcome: 'account-proposal-validated-not-applied', workspace, sessionId, provider: proposal.provider,
-      model: proposal.model, requestedTurns, sourceUnchanged: true, reviewCalls: 0, cost: 'unknown' };
+      model: proposal.model, requestedTurns, sourceUnchanged: true, reviewCalls: 0, ...(proposal.usage ? { dshUsage: proposal.usage } : {}), cost: 'unknown' };
   }
 } catch (error) {
   outcome = { outcome: 'account-diagnostic-inconclusive', workspace, sessionId: sessionId ?? null, requestedTurns,

@@ -51,6 +51,7 @@ export async function runDshProposal({ task, files, home, executable, apiKey, ac
   let proposal;
   let violation;
   let selection;
+  let usage;
   const deny = (message) => { violation = new Error(message); throw violation; };
   const acp = connect(executable, dshAcpArgs(executable), {
     cwd: workspace, env: environment, timeoutMs: 30000,
@@ -64,6 +65,7 @@ export async function runDshProposal({ task, files, home, executable, apiKey, ac
         reply += update.content.text;
         if (Buffer.byteLength(reply, 'utf8') > 256 * 1024) deny('DSH reply exceeds 256 KiB');
       }
+      if (update?.sessionUpdate === 'usage_update') usage = update;
     }
   });
   const abort = () => {
@@ -96,7 +98,7 @@ export async function runDshProposal({ task, files, home, executable, apiKey, ac
   }
   context.signal.throwIfAborted();
   if (violation) throw violation;
-  return { sessionId, summary: proposal.summary, files: proposal.files, ...selection };
+  return { sessionId, summary: proposal.summary, files: proposal.files, ...selection, ...(usage ? { usage } : {}) };
 }
 
 export async function runDshReviewTask({ core, task, context, executable, apiKey, accountHome, accountWorkspace, authHome, model },
@@ -125,5 +127,5 @@ export async function runDshReviewTask({ core, task, context, executable, apiKey
   if (result.verdict !== 'approved') throw new Error('Independent review rejected the DSH proposal');
   if (!(await core.inspectSourceConflicts(task.id)).matchesBaseline) throw new Error('Source conflict after review');
   context.signal.throwIfAborted();
-  return { handoff: `# ${task.id}\n\nDSH proposal independently approved; not merged.\n\nDSH session: ${proposal.sessionId}\nCodex session: ${result.sessionId}\nReview SHA-256: ${result.packetSha256}\n\n## DSH summary (untrusted text)\n${proposal.summary}\n\n## Review rationale\n${result.rationale}\n` };
+  return { handoff: `# ${task.id}\n\nDSH proposal independently approved; not merged.\n\nDSH session: ${proposal.sessionId}\n${proposal.usage ? `DSH usage: ${JSON.stringify(proposal.usage)}\n` : ''}Codex session: ${result.sessionId}\nReview SHA-256: ${result.packetSha256}\n\n## DSH summary (untrusted text)\n${proposal.summary}\n\n## Review rationale\n${result.rationale}\n` };
 }
