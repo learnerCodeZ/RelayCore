@@ -73,6 +73,8 @@ npm run check:dsh-account
 
 同日**完整账户闭环首次成功**：`scripts/probe-dsh-task.mjs --run-task` 在未设置 `DEEPSEEK_API_KEY` 时自动走账户模式（`runDshReviewTask` 传 `accountHome` 与账户工作区，默认 `D:\MYCODE\RCtest`，可用第三个参数覆盖；设置 Key 则保留 Key 模式）。结果 `reviewed-not-merged`：`COMPLETED`、恰好 2 轮（DSH 提案 1 + Codex 审查 1）、双 session、源文件未变、候选更新、`HANDOFF.md` 未合并且含审查快照 SHA-256；总时长预算 240 秒。SDK 侧超时根因（代理剥离 + 重连误判）见 `docs/codex-review.md`。单点成功不构成稳定性或费用结论；生产 Daemon 仍不挂执行器。
 
+2026-10-26 补充**账户取消诊断**：`scripts/probe-dsh-account.mjs --probe-cancel` 发一次真实 prompt 后取消，成功判定为取消通知送达且原 prompt 返回 `stopReason:"cancelled"`、无工具/权限事件。实测 `account-prompt-cancelled`（证据 `local/relaycore-dsh-account-Ocy49V`）。注意 `DeepSeek-V4.1-Flash` 会把整个回复作为单个 chunk 一次性下发，取消窗口须在发出后立即把握（脚本用 250ms）；同轮首次捕获到 DSH 用量事件 `{"used":6646,"size":1048576}`（`used` 语义待与账户账单核对）。
+
 ## 已有 API Key 提案诊断：可选通道
 
 以下仅供已经选择 API Key 方式的测试，不是账号接入的必做步骤。只有账号的用户暂不执行这段命令，优先验证账号路线。结构化接口不再只要求模型回复 `OK`：一次性样例中 `message.txt` 为 `pending` 加换行，要求返回改成 `ready` 加换行的提案。脚本保存 JSON 并核对准确内容，**不应用提案、不调用 SDK**，任务保持 `DRAFT`。最多一次桥接提示，30 秒取消信号；原生消耗和费用仍需核对。

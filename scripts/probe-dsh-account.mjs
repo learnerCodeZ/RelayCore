@@ -10,7 +10,7 @@ import { dshAccountEnvironment, selectAccountModel } from '../src/dsh-account.mj
 import { writeFileSync } from 'node:fs';
 
 const [mode = '--check-only', executable = 'D:/DeepSeekHarness/DeepSeek Harness.exe', requestedWorkspace = 'D:/MYCODE/RCtest'] = process.argv.slice(2);
-if (!['--check-only', '--run-proposal'].includes(mode)) throw new Error('Usage: node scripts/probe-dsh-account.mjs [--check-only|--run-proposal] [DSH executable] [test workspace]');
+if (!['--check-only', '--run-proposal', '--probe-cancel'].includes(mode)) throw new Error('Usage: node scripts/probe-dsh-account.mjs [--check-only|--run-proposal|--probe-cancel] [DSH executable] [test workspace]');
 const accountHome = resolve(process.env.DSH_HOME?.trim() || join(homedir(), '.dsh'));
 const workspace = resolve(requestedWorkspace);
 for (const path of [accountHome, workspace]) {
@@ -43,6 +43,58 @@ try {
     const selected = await selectAccountModel(acp, sessionId, session.configOptions);
     outcome = { outcome: 'account-route-selected', workspace, sessionId, matchingSessions: listed.sessions?.length ?? null,
       ...selected, requestedTurns: 0 };
+  } else if (mode === '--probe-cancel') {
+    let toolCalls = 0;
+    let permissionRequests = 0;
+    let replyChunks = 0;
+    let usage;
+    acp = openAcpLifecycle(executable, dshAcpArgs(executable), {
+      cwd: workspace, env: dshAccountEnvironment(accountHome), timeoutMs: 30000,
+      onPermissionRequest() { permissionRequests++; },
+      onUpdate(params) {
+        if (params?.sessionId !== sessionId) return;
+        const update = params.update;
+        if (['tool_call', 'tool_call_update'].includes(update?.sessionUpdate)) toolCalls++;
+        if (update?.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') replyChunks++;
+        if (update?.sessionUpdate === 'usage_update') usage = update;
+      }
+    });
+    stage = 'initialize';
+    if ((await acp.initialize()).protocolVersion !== 1) throw new Error('ACP v1 was not negotiated');
+    stage = 'new-session';
+    const session = await acp.newSession(workspace);
+    sessionId = session.sessionId;
+    if (typeof sessionId !== 'string' || !sessionId) throw new Error('DSH session ID is missing');
+    stage = 'select-account-model';
+    const selected = await selectAccountModel(acp, sessionId, session.configOptions);
+    stage = 'prompt';
+    requestedTurns = 1;
+    let promptSettled = false;
+    const pendingPrompt = acp.prompt(sessionId,
+      'Write 80 short numbered lines containing only the word ping. Do not use tools or read files.');
+    void pendingPrompt.then(() => { promptSettled = true; }, () => { promptSettled = true; });
+    // The account model can deliver its whole reply as one chunk, so a
+    // first-chunk trigger never fires: cancel shortly after dispatch instead.
+    const deadline = Date.now() + 250;
+    while (!promptSettled && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    const pendingAtCancel = !promptSettled;
+    let cancelSent = false;
+    let stopReason;
+    let promptFailed = false;
+    try {
+      if (pendingAtCancel) {
+        await acp.cancelSession(sessionId);
+        cancelSent = true;
+      }
+      stopReason = (await pendingPrompt).stopReason;
+    } catch {
+      promptFailed = true;
+    }
+    const cancelled = cancelSent && stopReason === 'cancelled' && toolCalls === 0 && permissionRequests === 0;
+    outcome = { outcome: cancelled ? 'account-prompt-cancelled' : 'account-cancel-inconclusive', workspace, sessionId,
+      ...selected, requestedTurns, pendingAtCancel, cancelSent, stopReason, promptFailed, replyChunks,
+      toolCalls, permissionRequests, ...(usage ? { dshUsage: usage } : {}), cost: 'unknown' };
+    if (!cancelled) process.exitCode = 1;
   } else {
     const path = 'relaycore-write-probe.txt';
     const source = join(workspace, path);
