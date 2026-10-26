@@ -13,7 +13,8 @@
     "smoke:tasks": "node scripts/smoke-task-lifecycle.mjs",
     "check:review": "node scripts/probe-codex-review.mjs --check-only",
     "login:review": "node scripts/login-codex-review.mjs",
-    "check:dsh-account": "node scripts/probe-dsh-account.mjs --check-only"
+    "check:dsh-account": "node scripts/probe-dsh-account.mjs --check-only",
+    "diagnose:crash": "node scripts/diagnose-crash-recovery.mjs"
   },
   "dependencies": {
     "@openai/codex-sdk": "0.162.1"

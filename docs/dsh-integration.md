@@ -73,7 +73,7 @@ npm run check:dsh-account
 
 同日**完整账户闭环首次成功**：`scripts/probe-dsh-task.mjs --run-task` 在未设置 `DEEPSEEK_API_KEY` 时自动走账户模式（`runDshReviewTask` 传 `accountHome` 与账户工作区，默认 `D:\MYCODE\RCtest`，可用第三个参数覆盖；设置 Key 则保留 Key 模式）。结果 `reviewed-not-merged`：`COMPLETED`、恰好 2 轮（DSH 提案 1 + Codex 审查 1）、双 session、源文件未变、候选更新、`HANDOFF.md` 未合并且含审查快照 SHA-256；总时长预算 240 秒。SDK 侧超时根因（代理剥离 + 重连误判）见 `docs/codex-review.md`。单点成功不构成稳定性或费用结论；生产 Daemon 仍不挂执行器。
 
-2026-10-26 补充**账户取消诊断**：`scripts/probe-dsh-account.mjs --probe-cancel` 发一次真实 prompt 后取消，成功判定为取消通知送达且原 prompt 返回 `stopReason:"cancelled"`、无工具/权限事件。实测 `account-prompt-cancelled`（证据 `local/relaycore-dsh-account-Ocy49V`）。注意 `DeepSeek-V4.1-Flash` 会把整个回复作为单个 chunk 一次性下发，取消窗口须在发出后立即把握（脚本用 250ms）；同轮首次捕获到 DSH 用量事件 `{"used":6646,"size":1048576}`（`used` 语义待与账户账单核对）。
+2026-10-26 补充**账户取消诊断**：`scripts/probe-dsh-account.mjs --probe-cancel` 发一次真实 prompt 后取消，成功判定为取消通知送达且原 prompt 返回 `stopReason:"cancelled"`、无工具/权限事件。实测 `account-prompt-cancelled`（证据 `local/relaycore-dsh-account-Ocy49V`）。注意 `DeepSeek-V4.1-Flash` 会把整个回复作为单个 chunk 一次性下发，取消窗口须在发出后立即把握（脚本用 250ms）。同轮捕获到 `usage_update`：`{"used":6646,"size":1048576}`——`size` 是 1M 上下文窗口，`used` 是上下文占用 token 量，**不是金额**；费用以账户账单为准（用户核对：当日 3 次请求合计 < ¥0.01，为用户报告口径）。
 
 ## 已有 API Key 提案诊断：可选通道
 

@@ -1,6 +1,6 @@
 # Phase 1 实现状态
 
-状态：**进行中，未达到 MVP 验收标准**。截至 2026-10-25，已实现本地控制骨架、内部时限/回合守卫、独立验收材料，以及 DSH 数据提案→受控副本写入→SDK Review 的内部组合执行器。无模型测试 52/52 通过。**真实双模型协作闭环首次成功**：DSH 账户（`deepseek-account` / `DeepSeek-V4.1-Flash`）提案 → 候选副本 → 独立 SDK 审查批准 → 未合并 HANDOFF（`reviewed-not-merged`，2 轮、双 session、源文件未变）；SDK 审查超时定位为代理剥离 + 重连误判并修复，修复后审查带完整 usage 成功。DSH Desktop 的只读拒写等单点证据不变。**仍未满足的 Phase 1 准入**：真实故障/取消/恢复证据、额度与费用边界（cost 均 unknown）、多次运行稳定性、生产 Daemon 执行器接入（保持关闭）。单点闭环成功不放宽准入，不进入 Phase 2。
+状态：**进行中，未达到 MVP 验收标准**。截至 2026-10-26，已实现本地控制骨架、内部时限/回合守卫、独立验收材料，以及 DSH 数据提案→受控副本写入→SDK Review 的内部组合执行器。无模型测试 52/52 通过。**真实双模型协作闭环首次成功**：DSH 账户（`deepseek-account` / `DeepSeek-V4.1-Flash`）提案 → 候选副本 → 独立 SDK 审查批准 → 未合并 HANDOFF（`reviewed-not-merged`，2 轮、双 session、源文件未变）。**真实取消**在账户与 Key 路线各有一单点证据；**真实崩溃恢复**已用硬杀进程实测（`npm run diagnose:crash`：RUNNING→RECOVERY_REQUIRED 恰好一次、孤立 HANDOFF 一次性隔离、零模型调用）。费用侧：用户账单核对当日 3 次 DSH 请求合计 < ¥0.01；Codex 审查 usage 10920/56 tokens。**仍未满足的准入**：多次连续闭环的稳定性、OpenAI 侧账单金额核对、生产 Daemon 执行器接入（保持关闭）。单点证据不放宽准入，不进入 Phase 2。
 
 ## 已实现与验证
 
