@@ -1,16 +1,16 @@
 # DSH 任务接入：数据提案与独立验收
 
-更新：2026-10-25，仍属 Phase 1。生产 Daemon 不传执行器，MCP 不开放派发。
+更新：2026-10-26，Phase 1 已由用户确认，Phase 2 进行中。普通生产 Daemon 不传执行器，用户 Desktop 配置不开放派发；隔离 MCP→Daemon 有一次真实成功，不代表稳定性。Phase 2 快照守卫仅无模型验证。
 
 ## 认证方式：可以走账号，不必先申请 API Key
 
 DSH 官方将两种模型路由分开：[`deepseek-account`](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/llm/llm-deepseek-account/README.md) 使用官方账号服务提供的授权；[`deepseek-official`](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/llm/llm-deepseek-api-key/README.md) 使用 API Key。账号路由不退回 Key，账号登录也不会替 API 路由补 Key。账号可用模型和访问资格仍由服务及客户端版本决定，不能推断为免费或无限。
 
-**本项目当前探针只实现了 API 模式，不是 DSH 只支持 API。** `runDshProposal()` 检查 `apiKey`，脚本检查 `DEEPSEEK_API_KEY`；同时创建全新 `DSH_HOME`，没有 Desktop 的登录状态。之前隔离探针报 `deepseek-official` 缺 Key，只说明当时选了 API 路由，不能证明账号不可用。此前让只有账号的用户先准备 Key 的指引不够准确，现纠正。
+**本项目已实现账户与可选 Key 两条实验路线。** `runDshProposal()` 接受互斥的 `accountHome` 或 `apiKey`；账户模式让原生 DSH 服务消费已有登录，不由 Bridge 读取或复制凭据。早期隔离 Key 探针报缺 Key，只说明当时选了 API 路由，不能解释为 DSH 不支持账户。
 
-下一步优先验证官方账号通道，而不是要求用户为了 RelayCore 新申请 Key。需要核对本机版本、ACP 模型选择和受控授权范围；Desktop 登录不会自动进入新建的隔离进程。目前账号接入尚未完成，不能保证现有登录立即可复用。若需要独立浏览器授权，应由用户亲自完成；不抓取 Cookie、不复制令牌，也不把账号令牌冒充 `DEEPSEEK_API_KEY`。账号服务的边界见[官方说明](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/credentials/deepseek-account/README.md)。
+本机账户无模型检查、一次受限提案和一次完整闭环均有已保存证据；只有账号的用户不必为此新申请 Key 或重复登录。换机器、Home 或账户状态变化时仍须重新核对原生账户模型选择，不能假设 Desktop 登录会进入全新 Home。需要重新授权时由用户亲自操作；不抓取 Cookie、不复制令牌，也不把账户令牌当作 API Key。账号服务边界见[官方说明](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/credentials/deepseek-account/README.md)。
 
-本机只读检查已确认安装版本为 `0.2.1-rc.2`，包含 `dsh-deepseek-account`、`dsh-deepseek-account-platform` 和 `dsh-llm-deepseek-account`。这证明组件已随包安装，不证明后台已经登录。另核对当前 ACP 实现的 `authMethods: []` 和立即成功的 `authenticate()`，与[官方 ACP 说明](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/acp/acp/README.md)一致：ACP 连接本身无需认证，该方法并不是 DeepSeek 账号登录。因此不能靠补发 ACP `authenticate` 就宣称账号已接通。下一步应使用 DSH 官方账号授权入口，并验证授权后的后台模型选择；尚未要求用户重新登录或执行新的 Key 命令。
+本机此前静态核对安装版本为 `0.2.1-rc.2`，包含账户相关组件；组件存在本身不证明登录。ACP 的 `authMethods: []` 与立即成功的 `authenticate()` 仅表示 stdio 连接不要求认证，不是 DeepSeek 登录。账户可用性的证据来自后续原生模型选择和真实诊断，不能用 no-op authenticate 替代。
 
 ## 哪些已经接上
 
@@ -20,8 +20,9 @@ DSH 官方将两种模型路由分开：[`deepseek-account`](https://github.com/
 | 真实 DSH 进程 | 本机 `--check-only` 创建并关闭独立会话通过，没有模型提示 |
 | 真实最小文本 | 之前用户报告过 `OK`、一次只读拒写及一次在途提示取消的单点结果 |
 | 内部任务组合 | `src/dsh.mjs` 可串联 DSH 数据提案、Core 候选写入、SDK Review 与交接；真实 ACP 子进程协议加假模型的测试通过 |
-| 真实结构化提案 | API 模式入口已准备，尚未真实运行；官方账号模式待接入，不要求只有账号的用户先申请 Key |
-| 真实双模型闭环 | 未通过；首次独立 SDK 诊断超时，不能自动重试掩盖未知结果 |
+| 真实结构化提案 | 账户模式已有一次精确 JSON 提案、源文件未变、未应用；可选 Key 提案入口保留 |
+| 真实双模型闭环 | 已保存一次账户 DSH→候选→SDK 批准→未合并 HANDOFF；早期 SDK 超时记录保留，单点不代表稳定性 |
+| 隔离受控调度 | 一次性本地授权、MCP→Daemon→账户提案→候选主机检查→SDK 批准→HANDOFF 已单次真实通过；源未变、未合并 |
 | 生产 MCP→Daemon→DSH | 未接入，不因内部模拟成功而打开 |
 
 ## 为什么先用数据提案
@@ -30,10 +31,11 @@ DSH 官方将两种模型路由分开：[`deepseek-account`](https://github.com/
 
 ```text
 Task Contract + 已声明文件内容
-  → DSH ACP：独立空工作目录、只读、仅返回 JSON，不使用工具
+  → DSH ACP：独立会话、只读、仅返回 JSON，不使用工具
   → Core：校验文件范围、大小、基线、运行状态及停止信号
   → 仅写入候选副本
-  → 新 REVIEW.json：原始内容与候选内容
+  → 可信宿主检查候选，复核检查期间源/候选未变
+  → 新 REVIEW.json：原始/候选内容与绑定候选 hash 的 testEvidence
   → Codex SDK：独立线程，只读 Review
   → approved 后写 HANDOFF.md；不合并回主项目
 ```
@@ -42,14 +44,29 @@ Task Contract + 已声明文件内容
 
 ## 代码对应
 
-- `runDshProposal()`：只向子进程显式传 DeepSeek 测试 Key、必要系统/代理变量及全新 home；不继承 RelayCore 控制口令或 OpenAI Key。原有提示探针也复用同一环境和 CLI 路径助手。
-- 原生工作目录是专用 home 下的空 `Workspace`，不是候选目录，源码作为 JSON 数据输入，避免直接加载候选目录中的项目配置。
+- `runDshProposal()`：账户模式使用指定原生账户 Home，Key 模式使用显式测试 Key 与全新 Home；两种环境均仅保留必要系统/代理变量，不转发 RelayCore 控制口令或 OpenAI Key。所有 DSH 启动点必须使用 `dshAcpArgs()`，不能绕过 console shim。
+- Key 模式在专用 Home 下的空 `Workspace` 启动；账户模式在显式测试工作区（本机 `D:\MYCODE\RCtest`）创建新只读会话。两者都不把候选目录交给 DSH，源码作为 JSON 数据输入；账户工作区不是空目录，不能声称不会加载其原生项目上下文。
+- `accountModelChoice()` 要求唯一的 `id: model` 选择项、正确的 category/type、唯一的 `deepseek-account` 分组及合法无重复 opaque 选项；`selectAccountModel()` 发送原生配置后复核账户目录与 currentValue。重复选择项、API 确认、确认失败或选择期间取消都不能预留 prompt、发模型请求或切换 Key。新增异常回归只用假 ACP，不证明真实服务一定不会返回异常。
 - 提示前调用 `beginModelTurn('dsh')`，原生会话创建后调用 `recordSession()`。DSH 与 Review 共享合约中的提示额度；这不等于原生 Agent 内部模型循环数。
 - 只接受正常 `end_turn` 和有界 JSON。工具、权限请求、错误会话、超限回复会失败；关闭会话期间的迟到工具事件也不能变成成功提案。
 - `core.applyWorkspaceProposal()`：先验证全部替换条目，只接受声明文件、无重复、无 NUL 的文本，合计不超过 256 KiB；核对原项目基线及候选未变，任务仍运行且未停止时才写副本。
-- `runDshReviewTask()`：提案后重新生成独立快照，Review 拒绝、失败或未知时不交接；批准后再核对源冲突，返回未合并交接。生产 Daemon 没有调用它。
+- `runDshReviewTask()`：提案后可先调用可信 `verifyCandidate()`，再生成带检查证据并持久登记的独立快照；旧入口不传验证器时明确显示未记录检查。Review 拒绝、失败或未知时不交接；批准必须对应等待前捕获的 hash，再复核登记、快照、候选及源基线。交接引用 Snapshot ID、revision 与 Review/Candidate hash，元数据从核对后的快照取值。普通生产 Daemon 没有调用它；当前新增快照守卫仅用假适配器验证，见[阶段二状态](phase-2-status.md)。
 
 适配器处理停止信号时尝试 ACP 取消并关闭连接；这不是远端停止确认或跨进程树强制终止的保证。同步候选写入没有跨文件原子事务，部分磁盘失败会留下待对账副本；同权限路径替换竞态、完整 OS 隔离、Token/金额硬预算和真实恢复仍未解决。
+
+### 中途断连与非法协议帧
+
+`src/acp.mjs` 不只检查能否 `JSON.parse`，还要求每行根值为非数组对象且 `jsonrpc` 为 `2.0`。`null`、数组、标量、缺少版本和错误版本都按固定错误拒绝并关闭子进程，不在事件回调里抛出未捕获 TypeError。这是基础帧头检查，不是完整 JSON-RPC/ACP 字段模式验证。
+
+首次致命传输故障后忽略同一缓冲区里剩余的更新，不让迟到消息继续触发观察者。任一请求超时经共用 `fail()` 立即拒绝所有待办、清掉计时器并锁定失败状态；之后的请求/取消不能再发送。错误分类只保存脱敏固定文本，不输出原始帧或凭据。
+
+新增零模型集成回归在真实 Node 假 ACP 子进程中制造三种 prompt 中断：没有回复、部分 JSON 回复、完整提案文本但没有 `session/prompt` 的正常终态。三者均不得触发 SDK Review、候选写入或 HANDOFF；SQLite 保留一次 DSH prompt 意图及会话，任务为 `RECOVERY_REQUIRED`。两次重开不重播、不重复恢复事件。**完整 JSON 文本不等于模型回合已确认完成。** 这些测试不调用 DSH 安装程序或账户服务，也不能证明真实模型服务已取消或停止计费。
+
+## 经 MCP 的受控调度验收
+
+`npm run check:dispatch` 在独立项目和系统分配端口验证 MCP→HTTP→Daemon 的真实控制路径，用假适配器完成提案/审查，真实模型提示为 0。`--run-task` 另需明确单次授权和 `--allow-unknown-cost`；只走已有账户，不复用原对话、不要求 API Key、不重启用户 Daemon。授权和最小预算在调用前检查，没有 MCP 自行批准入口，不能把两次桥接提示/240 秒上限当作金额硬封顶。详见[受控调度验收](controlled-dispatch.md)。
+
+2026-10-26 用户当次批准后只运行一次真实模式：`reviewed-not-merged`、`COMPLETED`，DSH/Codex 各一次桥接提示意图、双 session、主机精确文本检查通过；源样例保持 `pending\n`，候选为 `ready\n`。另从 SQLite 与文件独立核对授权消费、Review hash、HANDOFF 和候选一致，未自动重试。该入口仍只有一次真实成功；费用未知，旧账户账单不代表本次金额。生产执行和 Phase 2 均未因此自动开启。
 
 ## 无模型连接检查
 
@@ -99,6 +116,6 @@ try {
 
 ## 后续完整诊断入口
 
-`--run-task` 在专用账号已登录、DeepSeek Key 本机可用时，才尝试完整实验任务。显式合约为总时长 60 秒、最多两个桥接提示，调用前意图和会话 ID 写入一次性项目的 SQLite。只有 SDK 独立批准、源文件未变和样例内容匹配，脚本才报告 `reviewed-not-merged`；不直接修改本项目，也不连接正在运行的生产 Daemon。
+`--run-task` 要求专用 Codex 审查账号已登录；未设置 DeepSeek Key 时走 DSH 已登录账户，设置 Key 时走可选 Key 模式。显式合约为总时长 240 秒、最多两个桥接提示，调用前意图和会话 ID 写入一次性项目的 SQLite。只有 SDK 独立批准、源文件未变和样例内容匹配，脚本才报告 `reviewed-not-merged`；不直接修改本项目，也不连接正在运行的生产 Daemon。
 
-目前不把它列为已通过项，也没有在 SDK 首次结果未知后自动运行它。模型 Review 不等于执行了项目测试，`COMPLETED` 也只描述实验合约的执行结果，不授权合并。全量无模型测试 50/50 通过仍不能替代真实双模型与安全验收。
+已保存的一次成功不替代稳定性与安全验收，也不授权自动重跑。真实调用前必须说明单次目的与预算并获当前授权，失败不自动重试；模型 Review 不等于执行项目测试，`COMPLETED` 只描述实验合约结果，不授权合并。2026-10-26 最新全量无模型测试 57/57 通过；较早全量运行曾因随机端口命中 Windows 保留范围而失败，后续通过不能掩盖该测试环境不稳定因素。
