@@ -129,7 +129,7 @@ try {
   outcome = { outcome: 'account-diagnostic-inconclusive', workspace, sessionId: sessionId ?? null, requestedTurns,
     stage, reason: error.message === 'DSH account model catalog is unavailable' ? 'account-model-catalog-unavailable' : 'operation-not-completed',
     protocolCode: error.message.match(/^ACP (-?\d+):/)?.[1] ?? null,
-    transportFailure: ['ACP returned invalid JSON', 'DSH session ID is missing', 'write EPIPE'].find((message) => error.message === message) ??
+    transportFailure: ['ACP returned invalid JSON', 'ACP returned invalid JSON-RPC message', 'DSH session ID is missing', 'write EPIPE'].find((message) => error.message === message) ??
       (error.message.startsWith('ACP process exited (') ? 'ACP process exited' : error.message.includes('timed out') ? 'request timed out' : null),
     diagnosticCodes: ['EPERM', 'EACCES', 'ENOENT', 'ACCOUNT_SIGN_IN_REQUIRED', 'CLIENT_UPGRADE_REQUIRED', 'MODEL_UNSUPPORTED', 'MISSING_CREDENTIAL'].filter((code) => error.message.includes(code)),
     errorType: error.name, cost: 'unknown', externalCancellationConfirmed: false };

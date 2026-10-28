@@ -10,11 +10,11 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const data = join(root, '.RelayCore');
 const home = join(data, 'codex-review-home');
 for (const directory of [data, home]) {
-  await mkdir(directory).catch((error) => { if (error.code !== 'EEXIST') throw error; });
+  if (mode !== '--status') await mkdir(directory).catch((error) => { if (error.code !== 'EEXIST') throw error; });
   const info = await lstat(directory);
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Review login directory must be a plain directory');
 }
-if (process.platform === 'win32') {
+if (mode !== '--status' && process.platform === 'win32') {
   const script = `$ErrorActionPreference = 'Stop'; $target = [Console]::In.ReadToEnd();
     $owner = [Security.Principal.WindowsIdentity]::GetCurrent().User;
     $system = [Security.Principal.SecurityIdentifier]::new('S-1-5-18');
@@ -33,7 +33,7 @@ if (process.platform === 'win32') {
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
       { input: home, stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true, timeout: 10000 });
   } catch { throw new Error('Cannot protect the dedicated review login directory'); }
-} else {
+} else if (mode !== '--status') {
   await chmod(home, 0o700);
 }
 const cli = fileURLToPath(new URL('../node_modules/@openai/codex/bin/codex.js', import.meta.url));
