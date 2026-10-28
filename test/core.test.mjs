@@ -81,7 +81,7 @@ test('non-Git workspace copies only declared files and records a separate baseli
     assert.deepEqual(await core.inspectWorkspaceChanges(task.id), { workspace: prepared.workspace, changedPaths: [], files: 1 });
     assert.deepEqual(await core.verifyWorkspace(task.id), { workspace: prepared.workspace, matchesBaseline: true, files: 1 });
     assert.deepEqual(await core.inspectSourceConflicts(task.id), { conflictedPaths: [], matchesBaseline: true });
-    await assert.rejects(core.prepareWorkspace(task.id), /already exists/);
+    await assert.rejects(core.prepareWorkspace(task.id), /already registered; discard it before preparing again/);
     assert.throws(() => core.dispatch(task.id), /disabled/);
     core.close();
   } finally { await rm(root, { recursive: true, force: true }); }

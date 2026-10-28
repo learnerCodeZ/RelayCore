@@ -10,7 +10,9 @@ export function dshAccountEnvironment(home) {
 
 export function accountModelChoice(configOptions) {
   if (!Array.isArray(configOptions)) throw new Error('DSH account model catalog is unavailable');
-  const selector = configOptions?.find((option) => option.id === 'model' && option.category === 'model' && option.type === 'select');
+  const selectors = configOptions.filter((option) => option?.id === 'model');
+  if (selectors.length !== 1 || selectors[0].category !== 'model' || selectors[0].type !== 'select') throw new Error('DSH account model catalog is unavailable');
+  const selector = selectors[0];
   const groups = Array.isArray(selector?.options) ? selector.options.filter((group) => group?.group === 'deepseek-account') : [];
   if (groups?.length !== 1 || !Array.isArray(groups[0].options) || !groups[0].options.length) throw new Error('DSH account model catalog is unavailable');
   const choices = groups[0].options;
@@ -24,7 +26,7 @@ export async function selectAccountModel(acp, sessionId, configOptions) {
   const choice = accountModelChoice(configOptions);
   const result = await acp.setConfigOption(sessionId, choice.configId, choice.value);
   const confirmed = accountModelChoice(result?.configOptions);
-  const selected = result.configOptions.find((option) => option.id === choice.configId)?.currentValue;
+  const selected = result.configOptions.find((option) => option?.id === choice.configId)?.currentValue;
   if (selected !== choice.value || confirmed.value !== choice.value) throw new Error('DSH did not confirm the account model');
   return { provider: 'deepseek-account', model: confirmed.name };
 }

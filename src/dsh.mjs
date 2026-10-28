@@ -25,12 +25,14 @@ export function dshEnvironment(home, apiKey) {
     LOCALAPPDATA: join(home, 'Local'), TEMP: join(home, 'Local'), TMP: join(home, 'Local') };
 }
 
-export async function runDshProposal({ task, files, home, executable, apiKey, accountHome, accountWorkspace, context }, connect = openAcpLifecycle) {
+export async function runDshProposal({ task, files, home, executable, apiKey, accountHome, accountWorkspace, context, guidance }, connect = openAcpLifecycle) {
   if (accountHome !== undefined && apiKey !== undefined) throw new Error('Do not mix DSH account and API key modes');
   if (accountHome === undefined && (typeof apiKey !== 'string' || !apiKey.trim())) throw new Error('Provide a test-only DeepSeek API key locally or select account mode');
   if (!context?.signal || typeof context.beginModelTurn !== 'function' || typeof context.recordSession !== 'function') throw new Error('DSH requires execution controls');
+  if (guidance !== undefined && (typeof guidance !== 'string' || !guidance.trim() || guidance.length > 8000)) throw new Error('Guidance must be nonempty text of at most 8000 characters');
   context.signal.throwIfAborted();
-  const input = JSON.stringify({ objective: task.contract.objective, acceptance: task.contract.acceptance, files });
+  const input = JSON.stringify({ ...(guidance ? { userGuidance: guidance } : {}),
+    objective: task.contract.objective, acceptance: task.contract.acceptance, files });
   if (Buffer.byteLength(input, 'utf8') > 256 * 1024) throw new Error('DSH input exceeds 256 KiB');
   const directory = await lstat(home);
   if (!directory.isDirectory() || directory.isSymbolicLink() || (await readdir(home)).length) throw new Error('DSH requires an empty dedicated home');
@@ -102,7 +104,7 @@ export async function runDshProposal({ task, files, home, executable, apiKey, ac
 }
 
 export async function runDshReviewTask({ core, task, context, executable, apiKey, accountHome, accountWorkspace, authHome, model },
-  { propose = runDshProposal, review = runCodexReview } = {}) {
+  { propose = runDshProposal, review = runCodexReview, verifyCandidate } = {}) {
   context.signal.throwIfAborted();
   const candidate = await core.verifyWorkspace(task.id);
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
@@ -119,13 +121,28 @@ export async function runDshReviewTask({ core, task, context, executable, apiKey
   const homeInfo = await lstat(homes);
   if (!homeInfo.isDirectory() || homeInfo.isSymbolicLink()) throw new Error('DSH homes must be a plain directory');
   const home = await mkdtemp(join(homes, `${task.id}-`));
-  const proposal = await propose({ task, files, home, executable, apiKey, accountHome, accountWorkspace, context });
+  // Ordinary guidance recorded while the task ran folds into the next real
+  // prompt and is archived; replay after a pause consumes it exactly once.
+  const guidance = typeof core.consumeGuidance === 'function' ? await core.consumeGuidance(task.id) : undefined;
+  const proposal = await propose({ task, files, home, executable, apiKey, accountHome, accountWorkspace, context,
+    ...(guidance ? { guidance } : {}) });
+  if (proposal.usage && typeof core.recordUsage === 'function') {
+    try { core.recordUsage('dsh', proposal.usage, proposal.model); }
+    catch { /* a malformed usage event must not fail an otherwise valid proposal */ }
+  }
   await core.applyWorkspaceProposal(task.id, proposal.files, context.signal);
-  const artifact = await core.prepareReviewWorkspace(task.id);
+  const artifact = await core.prepareReviewWorkspace(task.id, { verifyCandidate, signal: context.signal });
+  const { snapshotId, sha256: expectedReviewSha256 } = artifact;
   const result = await review({ review: artifact, model, authHome, context });
+  if (result.usage && typeof core.recordUsage === 'function') {
+    try { core.recordUsage('codex', result.usage, model); }
+    catch { /* a malformed usage event must not fail an otherwise valid review */ }
+  }
   context.signal.throwIfAborted();
   if (result.verdict !== 'approved') throw new Error('Independent review rejected the DSH proposal');
-  if (!(await core.inspectSourceConflicts(task.id)).matchesBaseline) throw new Error('Source conflict after review');
+  if (result.packetSha256 !== expectedReviewSha256) throw new Error('Independent review returned a different snapshot hash');
+  const snapshot = await core.verifyReviewedWorkspace(task.id, snapshotId);
+  if (snapshot.sha256 !== expectedReviewSha256) throw new Error('Registered review snapshot does not match the review');
   context.signal.throwIfAborted();
-  return { handoff: `# ${task.id}\n\nDSH proposal independently approved; not merged.\n\nDSH session: ${proposal.sessionId}\n${proposal.usage ? `DSH usage: ${JSON.stringify(proposal.usage)}\n` : ''}Codex session: ${result.sessionId}\nReview SHA-256: ${result.packetSha256}\n\n## DSH summary (untrusted text)\n${proposal.summary}\n\n## Review rationale\n${result.rationale}\n` };
+  return { handoff: `# ${task.id}\n\nDSH proposal independently approved; not merged.\n\nDSH session: ${proposal.sessionId}\n${proposal.usage ? `DSH usage: ${JSON.stringify(proposal.usage)}\n` : ''}Codex session: ${result.sessionId}\nSnapshot ID: ${snapshot.snapshotId}\nTask revision: ${snapshot.revision}\nReview SHA-256: ${snapshot.sha256}\nCandidate SHA-256: ${snapshot.candidateSha256}\nCandidate checks: ${snapshot.testEvidence ? `${snapshot.testEvidence.checks.length} passed (${snapshot.testEvidence.checker})` : 'not recorded'}\n\n## DSH summary (untrusted text)\n${proposal.summary}\n\n## Review rationale\n${result.rationale}\n` };
 }

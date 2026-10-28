@@ -22,9 +22,15 @@ export function openAcpLifecycle(command, args, { cwd, env, timeoutMs = 15000, o
   child.on('close', (code) => fail(new Error(`ACP process exited (${code})`)));
   child.stdin.on('error', (error) => fail(error));
   createInterface({ input: child.stdout }).on('line', (line) => {
+    if (failure) return;
     let message;
     try { message = JSON.parse(line); } catch {
       fail(new Error('ACP returned invalid JSON'));
+      child.kill();
+      return;
+    }
+    if (!message || typeof message !== 'object' || Array.isArray(message) || message.jsonrpc !== '2.0') {
+      fail(new Error('ACP returned invalid JSON-RPC message'));
       child.kill();
       return;
     }
@@ -56,8 +62,7 @@ export function openAcpLifecycle(command, args, { cwd, env, timeoutMs = 15000, o
     if (failure) return reject(failure);
     const id = ++nextId;
     const timer = setTimeout(() => {
-      pending.delete(id);
-      reject(new Error(`ACP ${method} timed out`));
+      fail(new Error(`ACP ${method} timed out`));
       child.kill();
     }, timeoutMs);
     pending.set(id, { resolve, reject, timer });

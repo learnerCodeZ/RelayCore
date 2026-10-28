@@ -14,10 +14,16 @@ const tools = [
     type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
   { name: 'task_events', description: 'Read the event journal for one task.', inputSchema: {
     type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
-  { name: 'dispatch_task', description: 'Request execution. Currently refuses until external safety checks pass.', inputSchema: {
+  { name: 'dispatch_task', description: 'Request execution of a locally preauthorized task within its budget. The default daemon disables execution; this tool cannot grant authorization.', inputSchema: {
     type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
   { name: 'stop_task', description: 'Cancel a draft/queued task, or request stop for an active task.', inputSchema: {
-    type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } }
+    type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  { name: 'pause_task', description: 'Pause an active task or park a recovery-required task after manual verification. Does not grant budget.', inputSchema: {
+    type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  { name: 'resume_task', description: 'Re-queue a paused task under its original authorization and cumulative budget.', inputSchema: {
+    type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  { name: 'guide_task', description: 'Record ordinary guidance for a task; it folds into the next model prompt without interrupting a running turn.', inputSchema: {
+    type: 'object', properties: { id: { type: 'string' }, text: { type: 'string', maxLength: 8000 } }, required: ['id', 'text'] } }
 ];
 
 async function invoke(name, args) {
@@ -29,6 +35,12 @@ async function invoke(name, args) {
   if (name === 'task_events') return call('GET', `${path}/events`);
   if (name === 'dispatch_task') return call('POST', `${path}/dispatch`);
   if (name === 'stop_task') return call('POST', `${path}/stop`);
+  if (name === 'pause_task') return call('POST', `${path}/pause`);
+  if (name === 'resume_task') return call('POST', `${path}/resume`);
+  if (name === 'guide_task') {
+    if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 8000) throw new Error('Guidance must be nonempty text of at most 8000 characters');
+    return call('POST', `${path}/guide`, { text: args.text });
+  }
   throw new Error('Unknown tool');
 }
 

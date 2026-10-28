@@ -15,10 +15,16 @@ const scenario = process.env.TEST_DSH_SCENARIO;
 createInterface({ input: process.stdin }).on('line', (line) => {
   const message = JSON.parse(line);
   if (message.method === 'session/cancel') return;
-  const send = (value) => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...value})+'\\n');
+  const send = (value, done) => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...value})+'\\n', done);
   if (message.method === 'session/prompt') {
     if (scenario === 'waiting') return;
+    if (scenario === 'crash-empty') process.exit(23);
     const update = scenario === 'tool' ? {sessionUpdate:'tool_call'} : {sessionUpdate:'agent_message_chunk',content:{type:'text',text: scenario === 'malformed' ? 'not json' : JSON.stringify({summary:'Set the requested message.',files: scenario === 'duplicate' ? [{path:'message.txt',contents:'ready\\n'},{path:'message.txt',contents:'ready\\n'}] : [{path: scenario === 'undeclared' ? '../outside.txt' : 'message.txt',contents: scenario === 'oversized' ? 'x'.repeat(256*1024) : 'ready\\n'}]})}};
+    if (['crash-partial', 'crash-full'].includes(scenario)) {
+      if (scenario === 'crash-partial') update.content.text = '{"summary":"incomplete';
+      send({ method: 'session/update', params: { sessionId: 'dsh-test-session', update } }, () => process.exit(23));
+      return;
+    }
     if (scenario === 'permission') send({id:900,method:'session/request_permission',params:{sessionId:'dsh-test-session'}});
     else send({method:'session/update',params:{sessionId:scenario === 'foreign' ? 'another-session' : 'dsh-test-session',update}});
   }
@@ -83,9 +89,20 @@ async function exercise(scenario, verdict = 'approved', maxModelTurns = 2) {
     }
     await settled;
     while (core.get(task.id).state === 'RUNNING') await setTimeout(5);
-    return { task: core.get(task.id), events: core.events(task.id).map((event) => event.kind), reviewCalls, snapshotSeparated,
+    const result = { task: core.get(task.id), events: core.events(task.id).map((event) => event.kind), reviewCalls, snapshotSeparated,
       source: await readFile(join(root, 'message.txt'), 'utf8'), candidate: await readFile(join(candidate.workspace, 'message.txt'), 'utf8'),
-      handoff: await lstat(join(root, '.RelayCore', '.agent-tasks', task.id, 'HANDOFF.md')).then(() => true, () => false) };
+      handoff: await lstat(join(root, '.RelayCore', '.agent-tasks', task.id, 'HANDOFF.md')).then(() => true, () => false),
+      reopened: [], replays: 0 };
+    core.close();
+    core = undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      core = await openCore(root, async () => { result.replays++; throw new Error('Unexpected task replay'); });
+      await setTimeout(0);
+      result.reopened.push({ task: core.get(task.id), events: core.events(task.id).map((event) => event.kind) });
+      core.close();
+      core = undefined;
+    }
+    return result;
   } finally {
     core?.close();
     if (started) await settled;
@@ -112,6 +129,26 @@ test('DSH tools, permissions, foreign sessions and invalid proposals never reach
     assert.equal(result.source, 'pending\n', scenario);
     assert.equal(result.candidate, 'pending\n', scenario);
     assert.equal(result.handoff, false, scenario);
+  }
+});
+
+test('DSH process loss keeps durable intent without review, handoff or replay', async () => {
+  for (const scenario of ['crash-empty', 'crash-partial', 'crash-full']) {
+    const result = await exercise(scenario);
+    assert.equal(result.task.state, 'RECOVERY_REQUIRED', scenario);
+    assert.equal(result.reviewCalls, 0, scenario);
+    assert.equal(result.source, 'pending\n', scenario);
+    assert.equal(result.candidate, 'pending\n', scenario);
+    assert.equal(result.handoff, false, scenario);
+    assert.equal(result.replays, 0, scenario);
+    for (const snapshot of [{ task: result.task, events: result.events }, ...result.reopened]) {
+      assert.equal(snapshot.task.state, 'RECOVERY_REQUIRED', scenario);
+      assert.deepEqual(snapshot.task.sessions.map(({ agent, sessionId }) => ({ agent, sessionId })),
+        [{ agent: 'dsh', sessionId: 'dsh-test-session' }], scenario);
+      assert.deepEqual(snapshot.events.filter((kind) => kind.startsWith('model_turn.requested.')), ['model_turn.requested.dsh'], scenario);
+      assert.equal(snapshot.events.filter((kind) => kind === 'task.recovery_required').length, 1, scenario);
+      assert.equal(snapshot.events.includes('task.completed'), false, scenario);
+    }
   }
 });
 

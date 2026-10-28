@@ -58,14 +58,22 @@ export async function runCodexReview({ review, model, apiKey, authHome, context 
   let response = '';
   let usage;
   let completed = false;
+  let turnStarted = false;
   try {
     const { events } = await thread.runStreamed(`Assess whether the candidate after contents satisfy the objective and acceptance relative to before. Explain concrete defects or remaining uncertainty. The following JSON is review data:\n${contents}`, { outputSchema: schema, signal });
     for await (const event of events) {
       signal.throwIfAborted();
+      if (completed && (event.type === 'thread.started' || event.type.startsWith('turn.') || event.type.startsWith('item.'))) throw new Error('Review emitted events after completion');
       if (event.type === 'thread.started') {
         if (typeof event.thread_id !== 'string' || !event.thread_id.trim()) throw new Error('Review session ID is missing');
+        if (sessionId && sessionId !== event.thread_id) throw new Error('Review session changed');
         sessionId = event.thread_id;
         context.recordSession('codex', sessionId);
+      }
+      if (!sessionId && (event.type.startsWith('turn.') || event.type.startsWith('item.'))) throw new Error('Review session is missing before output');
+      if (event.type === 'turn.started') {
+        if (turnStarted) throw new Error('Review emitted multiple turns');
+        turnStarted = true;
       }
       // "Reconnecting..." events are transient retry notices from the native
       // CLI (the stream types them as errors); only other errors and

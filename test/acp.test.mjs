@@ -41,6 +41,15 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   }
   if (process.env.FAKE_ACP_MODE === 'timeout') return;
   if (process.env.FAKE_ACP_MODE === 'invalid') return process.stdout.write('not json\\n');
+  const invalidFrames = {
+    'null-frame': null, 'array-frame': [], 'scalar-frame': 7,
+    'missing-version': { id: message.id, result: { protocolVersion: 1 } },
+    'wrong-version': { jsonrpc: '1.0', id: message.id, result: { protocolVersion: 1 } }
+  };
+  if (Object.hasOwn(invalidFrames, process.env.FAKE_ACP_MODE)) return process.stdout.write(JSON.stringify(invalidFrames[process.env.FAKE_ACP_MODE]) + '\\n');
+  if (process.env.FAKE_ACP_MODE === 'invalid-late-update') return process.stdout.write('not json\\n' + JSON.stringify({
+    jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'test-session', update: { sessionUpdate: 'agent_message_chunk' } }
+  }) + '\\n');
   const result = message.method === 'initialize' ? { protocolVersion: 1 }
     : message.method === 'session/new' ? { sessionId: 'test-session' }
       : message.method === 'session/prompt' ? { stopReason: 'end_turn' }
@@ -75,6 +84,24 @@ test('ACP errors and malformed responses fail closed', async () => {
     try { await assert.rejects(acp.initialize(), /ACP (-32601|returned invalid JSON)/); }
     finally { await acp.close(); }
   }
+});
+
+test('ACP rejects invalid JSON-RPC envelopes without crashing', async () => {
+  for (const mode of ['null-frame', 'array-frame', 'scalar-frame', 'missing-version', 'wrong-version']) {
+    const acp = connect(mode);
+    try { await assert.rejects(acp.initialize(), /invalid JSON-RPC/, mode); }
+    finally { await acp.close(); }
+  }
+});
+
+test('ACP stops delivering buffered updates after a fatal protocol error', async () => {
+  const updates = [];
+  const acp = connect('invalid-late-update', (params) => updates.push(params));
+  try {
+    await assert.rejects(acp.initialize(), /invalid JSON/);
+    assert.deepEqual(updates, []);
+    await assert.rejects(acp.newSession(process.cwd()), /invalid JSON/);
+  } finally { await acp.close(); }
 });
 
 test('ACP session discovery and model configuration use the requested workspace and opaque value', async () => {
@@ -122,6 +149,14 @@ test('ACP cancel notification ends an in-flight prompt', async () => {
 
 test('ACP timeout stops the child', async () => {
   const acp = connect('timeout');
-  try { await assert.rejects(acp.initialize(), /timed out/); }
+  try {
+    const results = await Promise.allSettled([acp.initialize(), acp.newSession(process.cwd())]);
+    assert.deepEqual(results.map((result) => result.status), ['rejected', 'rejected']);
+    const failure = results[0].reason;
+    assert.match(failure.message, /initialize timed out/);
+    assert.equal(results[1].reason, failure);
+    await assert.rejects(acp.prompt('test-session', 'Never send this'), (error) => error === failure);
+    await assert.rejects(acp.cancelSession('test-session'), (error) => error === failure);
+  }
   finally { await acp.close(); }
 });

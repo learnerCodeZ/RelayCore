@@ -110,8 +110,46 @@ test('review reserves a turn, isolates configuration and accepts a structured ve
   });
 });
 
-test('review rejects tools, missing usage, malformed verdicts and changed artifacts', async () => {
-  for (const scenario of ['tool', 'usage', 'verdict', 'changed']) {
+test('review rejects session switches, extra turns and output after completion', async () => {
+  const started = { type: 'thread.started', thread_id: 'review-session' };
+  const turn = { type: 'turn.started' };
+  const verdict = { type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify({ verdict: 'approved', rationale: 'Checked.' }) } };
+  const completed = { type: 'turn.completed', usage: { input_tokens: 10, output_tokens: 5 } };
+  const scenarios = [
+    { name: 'changed-session', events: [started, { ...started, thread_id: 'foreign-session' }, verdict, completed], error: /Review session changed/ },
+    { name: 'repeated-turn-start', events: [started, turn, turn, verdict, completed], error: /multiple turns/ },
+    { name: 'repeated-completion', events: [started, verdict, completed, completed], error: /after completion/ },
+    { name: 'second-turn', events: [started, turn, verdict, completed, turn, verdict, completed], error: /after completion/ },
+    { name: 'late-verdict', events: [started, completed, verdict], error: /after completion/ },
+    { name: 'output-before-session', events: [verdict, started, completed], error: /session.*before output/ }
+  ];
+  for (const scenario of scenarios) {
+    await withReview(async (input, calls) => {
+      let signal;
+      let finalized = false;
+      class FakeCodex {
+        startThread() {
+          return { async runStreamed(prompt, options) {
+            signal = options.signal;
+            return { events: (async function* () {
+              try { yield* scenario.events; }
+              finally { finalized = true; }
+            })() };
+          } };
+        }
+      }
+      await assert.rejects(runCodexReview(input, FakeCodex), scenario.error, scenario.name);
+      assert.equal(calls.turns, 1, scenario.name);
+      assert.deepEqual(calls.sessions, scenario.name === 'output-before-session' ? []
+        : [{ agent: 'codex', sessionId: 'review-session' }], scenario.name);
+      assert.equal(signal.aborted, true, scenario.name);
+      assert.equal(finalized, true, scenario.name);
+    });
+  }
+});
+
+test('review rejects tools, missing usage, malformed verdicts, changed artifacts and interrupted streams', async () => {
+  for (const scenario of ['tool', 'usage', 'verdict', 'changed', 'truncated', 'disconnected']) {
     await withReview(async (input) => {
       class FakeCodex {
         startThread() {
@@ -121,12 +159,14 @@ test('review rejects tools, missing usage, malformed verdicts and changed artifa
               if (scenario === 'tool') yield { type: 'item.started', item: { type: 'command_execution' } };
               if (scenario === 'changed') await writeFile(input.review.inputPath, '{}');
               yield { type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify({ verdict: scenario === 'verdict' ? 'maybe' : 'approved', rationale: 'test' }) } };
+              if (scenario === 'truncated') return;
+              if (scenario === 'disconnected') throw new Error('Fake review stream disconnected');
               yield { type: 'turn.completed', usage: scenario === 'usage' ? null : { input_tokens: 10, output_tokens: 5 } };
             })() };
           } };
         }
       }
-      await assert.rejects(runCodexReview(input, FakeCodex), /forbidden tool|usage is missing|Invalid review verdict|artifact changed/);
+      await assert.rejects(runCodexReview(input, FakeCodex), /forbidden tool|usage is missing|Invalid review verdict|artifact changed|stream disconnected/);
     });
   }
 });
