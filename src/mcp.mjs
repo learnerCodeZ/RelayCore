@@ -5,6 +5,7 @@ const tools = [
   { name: 'create_task', description: 'Save a task draft. Does not run an Agent.', inputSchema: {
     type: 'object', properties: { title: { type: 'string' }, objective: { type: 'string' }, acceptance: { type: 'string' },
       allowedPaths: { type: 'array', items: { type: 'string' }, maxItems: 32 },
+      riskLevel: { type: 'string', enum: ['E0', 'E1', 'E2'], description: 'Execution risk level. E2 requires separate L3 consent at authorization time (--e2-approved / console checkbox). Default E1.' },
       executionLimits: { type: 'object', properties: {
         maxDurationSeconds: { type: 'integer', minimum: 1 }, maxModelTurns: { type: 'integer', minimum: 1 }
       }, required: ['maxDurationSeconds', 'maxModelTurns'], additionalProperties: false } },

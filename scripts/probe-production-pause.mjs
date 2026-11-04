@@ -13,6 +13,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { openMcpClient } from '../src/mcp-client.mjs';
+import { snapshotIdFromHandoff } from './pause-probe-utils.mjs';
 
 const args = process.argv.slice(2);
 const [executable, requestedWorkspace, consent] = args;
@@ -115,8 +116,7 @@ try {
   // the production-path acceptance that the review-quota stop point left open.
   diagnostic.stage = 'cli-integrate';
   const handoffText = await readFile(join(root, '.RelayCore', '.agent-tasks', taskId, 'HANDOFF.md'), 'utf8');
-  const snapshotId = /Snapshot ID: (S+)/.exec(handoffText)?.[1];
-  assert.ok(snapshotId, 'a completed real loop must carry a review snapshot');
+  const snapshotId = snapshotIdFromHandoff(handoffText);
   if (cli(['integrate', taskId, snapshotId]).status !== 0) throw new Error('CLI integrate failed');
   assert.equal(await readFile(join(root, 'message.txt'), 'utf8'), 'ready\n');
   if (cli(['rollback', taskId]).status !== 0) throw new Error('CLI rollback failed');

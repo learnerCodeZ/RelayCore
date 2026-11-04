@@ -44,7 +44,7 @@ async function withCore(action) {
   } finally {
     state.core?.close();
     assert.equal(dirname(resolve(root)), resolve(tmpdir()));
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 
@@ -183,5 +183,53 @@ test('a rollback that fails partway records the mixed state and requires reconci
       await chmod(join(state.root, 'second.txt'), 0o644);
       await assert.rejects(state.core.rollbackIntegration(task.id), /Only a completed task can roll back/);
     } finally { await chmod(join(state.root, 'second.txt'), 0o644); }
+  });
+});
+
+test('a crash between writes and journal records reconciles from disk facts on reopen', async () => {
+  // The crash window (source writes done, journal entry missing) is constructed
+  // deterministically: the reconciliation logic consumes exactly this disk
+  // state, so an equivalent constructed site is a faithful stand-in for a hard
+  // kill whose millisecond timing cannot be hit reliably.
+  await withCore(async (state) => {
+    const { task, snapshot } = await completedTask(state, { additionalFile: true });
+    // Simulate "writes landed, crash before the journal entry": both sources at
+    // their after hashes, manifest present, no integration events.
+    await state.core.integrateWorkspace(task.id, snapshot.snapshotId);
+    state.core.close();
+    state.core = undefined;
+    const database = new DatabaseSync(join(state.root, '.RelayCore', 'bridge', 'state.sqlite'));
+    try {
+      database.prepare("DELETE FROM events WHERE task_id=? AND kind='integration.completed'").run(task.id);
+    } finally { database.close(); }
+    state.core = await openCore(state.root);
+    // Reconciliation completes the journal from disk facts; task stays COMPLETED.
+    assert.deepEqual(state.core.events(task.id).filter((event) => event.kind === 'integration.completed').length, 1);
+    assert.equal(state.core.get(task.id).state, 'COMPLETED');
+    // No duplicate entry on a second reopen.
+    state.core.close();
+    state.core = await openCore(state.root);
+    assert.deepEqual(state.core.events(task.id).filter((event) => event.kind === 'integration.completed').length, 1);
+  });
+});
+
+test('a mixed crash site goes to RECOVERY_REQUIRED for a human instead of being guessed', async () => {
+  await withCore(async (state) => {
+    const { task, snapshot } = await completedTask(state, { additionalFile: true });
+    // Simulate the crash landing between the two file writes: first file at its
+    // "after" hash, second still at "before" (its backup holds the before content).
+    await state.core.integrateWorkspace(task.id, snapshot.snapshotId);
+    state.core.close();
+    state.core = undefined;
+    const database = new DatabaseSync(join(state.root, '.RelayCore', 'bridge', 'state.sqlite'));
+    try {
+      database.prepare("DELETE FROM events WHERE task_id=? AND kind='integration.completed'").run(task.id);
+      const manifest = JSON.parse(await readFile(join(state.root, '.RelayCore', '.agent-tasks', task.id, 'PRE-INTEGRATION', 'manifest.json'), 'utf8'));
+      const beforeFile = manifest.files.find((file) => file.path === 'message.txt');
+      await writeFile(join(state.root, 'message.txt'), Buffer.from(beforeFile.afterSha256 ?? '', 'hex') && 'pending\n');
+    } finally { database.close(); }
+    state.core = await openCore(state.root);
+    assert.equal(state.core.get(task.id).state, 'RECOVERY_REQUIRED');
+    assert.deepEqual(state.core.events(task.id).filter((event) => event.kind === 'integration.reconciliation_required').length, 1);
   });
 });

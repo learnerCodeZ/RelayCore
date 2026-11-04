@@ -37,7 +37,7 @@ await check('dsh-account-home', async () => {
   return { home };
 });
 await check('review-login', async () => {
-  const home = fileURL('../.RelayCore/codex-review-home/');
+  const home = process.env.RELAYCORE_REVIEW_AUTH_HOME?.trim() || fileURL('../.RelayCore/codex-review-home/');
   const info = await lstat(join(home, 'auth.json'));
   if (!info.isFile() || info.isSymbolicLink() || info.size > 1024 * 1024) throw new Error('auth.json missing or unusual');
   return { home };
@@ -47,12 +47,13 @@ await check('proxy', async () => {
   if (!proxy) throw new Error('no HTTP(S)_PROXY configured; direct access must be verified separately');
   return { proxy };
 });
-await check('port-8765', async () => {
+await check('relaycore-port', async () => {
   const { createServer } = await import('node:http');
   await new Promise((done, fail) => {
     const listener = createServer();
     listener.once('error', fail);
-    listener.listen(8765, '127.0.0.1', () => listener.close(done));
+    const port = Number(process.env.RELAYCORE_PORT ?? 8765);
+    listener.listen(port, '127.0.0.1', () => listener.close(done));
   });
   return { available: true };
 });

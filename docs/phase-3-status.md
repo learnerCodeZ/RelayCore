@@ -1,5 +1,7 @@
 # Phase 3：受控执行接线
 
+当前结论（2026-10-28）：主要接线和控制能力已实现，下面各日期段落保留历史状态；完整验收仍未通过。尤其 E0 目前是风险标签，尚无独立只读执行分支。最新缺陷与修复以[项目审视报告](项目审视与改进报告-2026-10-28.md)为准，不能将旧段落中的“只读控制台”“未接线”视为当前事实。
+
 状态：**进行中，未完成真实生产链路验收**。现有 Daemon 默认不配置外部执行器；只有显式设置账户模式及必要路径时才接入 DSH 和独立 Review。环境变量开关本身不是执行授权。
 
 ## 已实现及本次修复
@@ -28,9 +30,11 @@
 - **真实生产链路验收现状**：生产形态 daemon + MCP/CLI 全链路至 Codex 审查启动均真实通过（双 session 登记、快照守卫生效）；审查在远端被账号额度拒绝（`try again at 12:28 AM`），失败路径按设计工作（精确记录、RECOVERY_REQUIRED、无自动重试）。最后一步（审查通过→整合→回滚）待额度恢复后重跑 `scripts/probe-production.mjs` 完成验收。本轮真实调用：DSH 提案 2 次、Codex 审查尝试 2 次。
 - 有时限全量无模型回归 **123/123、0 skip**。仍未验证：真实在途暂停/恢复语义、并发文件替换竞态、网页审批；`/ui` 仍为本地只读视图。
 
-## 2026-10-28 续二：真实生产闭环 + 真实在途暂停验收完成
+## 2026-10-28 续二：真实在途暂停诊断及验收纠正
 
-额度重置后，`scripts/probe-production-pause.mjs`（真实在途暂停诊断）完成首次全链路验收（证据 `local/relaycore-pause-prod-eUC9N0`）：真实 DSH 第 1 轮在途时 `pause` 落地 → `resume` 后 drain 重新领取、真实重放 DSH 第 2 轮 → 审查快照 → 真实 Codex 审查批准 → `COMPLETED`；经 CLI 整合（源 pending→ready）与回滚（恢复 pending）。暂停重放消耗真实预算的语义得到验证（`model_turn_limit_exceeded` 的预算耗尽路径在假服务测试中覆盖）；CLI 本地授权要求显式 `--allow-unknown-cost`。完整回归 123/123。剩余：并发替换竞态、网页审批、多次运行稳定性。
+事后核对 `local/relaycore-pause-prod-eUC9N0/DIAGNOSTIC.json`：诊断记录了暂停、两次 DSH 意图和一次 Codex 意图，但结果为 `production-pause-not-completed`，停在 `cli-integrate`，错误为无法从 HANDOFF 提取快照 ID。因此，该次诊断**没有完成 CLI 整合和回滚**；此前本节称三合一验收成功不准确。问题源于快照 ID 正则误写为 `S+`，现已修复并补充无模型测试；修复后未重跑真实诊断。真实双模型整合/回滚的独立历史证据仍见 `local/relaycore-dispatch-probe-QGz0qI`，但它不等同于在途暂停和整合/回滚同一次成功。
+
+只读核对原现场时，新提取函数从 HANDOFF 找到 `TASK-8fe95831-4218-4f48-a47d-bcf9917aca35-nqYPXi`，对应 `REVIEW.json` 文件存在；本次没有重新核对数据库登记或内容 hash，也没有改变原诊断结果或调用模型。
 
 ## 2026-10-28 续三：Phase 3 收束——并发竞态、引导队列与风险路由
 
@@ -44,3 +48,7 @@
 并发竞态回归（`test/concurrency.test.mjs`）：同任务三路并发 prepare 恰好一胜且零残留；串行队列实测峰值并发 = 1；12 轮 pause-vs-complete 竞态终态恒为 COMPLETED 或 PAUSED 之一且事件/HANDOFF 一致。调试期间 drain 失败日志与探针 stderr 落盘直接定位了 `readFileSync` 缺失与 `ROUTING.json` 过早写入（拒绝尝试残留）两处问题。
 
 完整回归 **129/129、0 skip**。Phase 3 计划书范围到此收束；网页完整审批交互与 Token 分账属 Phase 4。
+
+### 2026-10-29 补记：E0 语义澄清
+
+`riskLevel` 目前是**合约标签与闸门输入**：E2 有硬闸门（L3 同意），E0/E1 在当前唯一已验证通道（受控副本 + 只读 DSH 策略的提案流程）中行为一致。在实现独立只读执行分支之前，E0 **不承诺端到端只读语义**；路由记录（ROUTING.json）如实标注声明级别，验收口径不变。

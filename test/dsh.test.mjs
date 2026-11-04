@@ -25,6 +25,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       send({ method: 'session/update', params: { sessionId: 'dsh-test-session', update } }, () => process.exit(23));
       return;
     }
+    if (scenario === 'success') send({method:'session/update',params:{sessionId:'dsh-test-session',update:{sessionUpdate:'usage_update',used:123,size:1000000}}});
     if (scenario === 'permission') send({id:900,method:'session/request_permission',params:{sessionId:'dsh-test-session'}});
     else send({method:'session/update',params:{sessionId:scenario === 'foreign' ? 'another-session' : 'dsh-test-session',update}});
   }
@@ -92,13 +93,13 @@ async function exercise(scenario, verdict = 'approved', maxModelTurns = 2) {
     const result = { task: core.get(task.id), events: core.events(task.id).map((event) => event.kind), reviewCalls, snapshotSeparated,
       source: await readFile(join(root, 'message.txt'), 'utf8'), candidate: await readFile(join(candidate.workspace, 'message.txt'), 'utf8'),
       handoff: await lstat(join(root, '.RelayCore', '.agent-tasks', task.id, 'HANDOFF.md')).then(() => true, () => false),
-      reopened: [], replays: 0 };
+      usage: core.usageSummary(), reopened: [], replays: 0 };
     core.close();
     core = undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
       core = await openCore(root, async () => { result.replays++; throw new Error('Unexpected task replay'); });
       await setTimeout(0);
-      result.reopened.push({ task: core.get(task.id), events: core.events(task.id).map((event) => event.kind) });
+      result.reopened.push({ task: core.get(task.id), events: core.events(task.id).map((event) => event.kind), usage: core.usageSummary() });
       core.close();
       core = undefined;
     }
@@ -119,6 +120,14 @@ test('DSH proposal crosses ACP, updates only the candidate and receives independ
   assert.equal(result.snapshotSeparated, true);
   assert.deepEqual(result.task.sessions.map((session) => session.agent).sort(), ['codex', 'dsh']);
   assert.deepEqual(result.events.filter((kind) => kind.startsWith('model_turn.requested.')), ['model_turn.requested.dsh', 'model_turn.requested.codex']);
+  assert.deepEqual(result.usage.entries.map(({ agent, usageKind, inputTokens, outputTokens, contextTokens, contextCapacity }) =>
+    ({ agent, usageKind, inputTokens, outputTokens, contextTokens, contextCapacity })), [
+    { agent: 'dsh', usageKind: 'context', inputTokens: null, outputTokens: null, contextTokens: 123, contextCapacity: 1000000 },
+    { agent: 'codex', usageKind: 'tokens', inputTokens: 20, outputTokens: 8, contextTokens: null, contextCapacity: null }
+  ]);
+  assert.deepEqual(result.usage.totals.dsh, { inputTokens: null, outputTokens: null, records: 1, tokenRecords: 0 });
+  assert.deepEqual(result.usage.totals.codex, { inputTokens: 20, outputTokens: 8, records: 1, tokenRecords: 1 });
+  for (const reopened of result.reopened) assert.deepEqual(reopened.usage, result.usage);
 });
 
 test('DSH tools, permissions, foreign sessions and invalid proposals never reach independent review', async () => {

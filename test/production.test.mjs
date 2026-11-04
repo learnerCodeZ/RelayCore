@@ -196,12 +196,28 @@ test('MCP dispatch and control CLI integrate and roll back an isolated reviewed 
   } finally { restoreEnv(); }
 });
 
-test('the read-only task view is reachable without a token and escapes task text', async () => {
+test('the task view hides content behind login and escapes task text when authenticated', async () => {
   await withProductionDaemon(async (state) => {
     await state.core.core.create({ ...contract, title: '<script>alert(1)</script>', objective: 'objective' });
-    const response = await fetch(`http://127.0.0.1:${state.core.server.address().port}/ui`);
-    assert.equal(response.status, 200);
-    const html = await response.text();
+    const port = state.core.server.address().port;
+    // Anonymous visitors only get the login form; no task text may leak.
+    const anonymous = await fetch(`http://127.0.0.1:${port}/ui`);
+    assert.equal(anonymous.status, 200);
+    const anonymousHtml = await anonymous.text();
+    assert.ok(anonymousHtml.includes('控制台登录'));
+    assert.equal(anonymousHtml.includes('alert(1)'), false);
+    // An authenticated session still gets escaped task text.
+    const { getControlToken } = await import('../src/auth.mjs');
+    const token = await getControlToken(state.root, { create: false });
+    const session = await fetch(`http://127.0.0.1:${port}/ui/session`, {
+      method: 'POST', headers: { authorization: `Bearer ${token}` } });
+    const { sessionToken } = await session.json();
+    const login = await fetch(`http://127.0.0.1:${port}/ui/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: sessionToken }) });
+    const cookie = /relaycore_ui=([^;]+)/.exec(login.headers.get('set-cookie'))[1];
+    const authenticated = await fetch(`http://127.0.0.1:${port}/ui`, { headers: { cookie: `relaycore_ui=${cookie}` } });
+    assert.equal(authenticated.status, 200);
+    const html = await authenticated.text();
     assert.ok(html.includes('&lt;script&gt;'));
     assert.equal(html.includes('<script>alert(1)</script>'), false);
   });

@@ -126,16 +126,16 @@ export async function runDshReviewTask({ core, task, context, executable, apiKey
   const guidance = typeof core.consumeGuidance === 'function' ? await core.consumeGuidance(task.id) : undefined;
   const proposal = await propose({ task, files, home, executable, apiKey, accountHome, accountWorkspace, context,
     ...(guidance ? { guidance } : {}) });
-  if (proposal.usage && typeof core.recordUsage === 'function') {
-    try { core.recordUsage('dsh', proposal.usage, proposal.model); }
+  if (proposal.usage && typeof context.recordUsage === 'function') {
+    try { context.recordUsage('dsh', proposal.usage, proposal.model); }
     catch { /* a malformed usage event must not fail an otherwise valid proposal */ }
   }
   await core.applyWorkspaceProposal(task.id, proposal.files, context.signal);
   const artifact = await core.prepareReviewWorkspace(task.id, { verifyCandidate, signal: context.signal });
   const { snapshotId, sha256: expectedReviewSha256 } = artifact;
   const result = await review({ review: artifact, model, authHome, context });
-  if (result.usage && typeof core.recordUsage === 'function') {
-    try { core.recordUsage('codex', result.usage, model); }
+  if (result.usage && typeof context.recordUsage === 'function') {
+    try { context.recordUsage('codex', result.usage, model); }
     catch { /* a malformed usage event must not fail an otherwise valid review */ }
   }
   context.signal.throwIfAborted();

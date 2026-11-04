@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -163,6 +163,11 @@ export async function openCore(root, executor = null, executionPolicy) {
   for (const [column, definition] of [['kind', "TEXT NOT NULL DEFAULT 'copy'"], ['metadata', 'TEXT']]) {
     if (!database.prepare('PRAGMA table_info(workspaces)').all().some((column_) => column_.name === column)) {
       database.exec(`ALTER TABLE workspaces ADD COLUMN ${column} ${definition}`);
+    }
+  }
+  for (const [column, definition] of [['usage_kind', "TEXT NOT NULL DEFAULT 'legacy-unclassified'"], ['context_capacity', 'INTEGER']]) {
+    if (!database.prepare('PRAGMA table_info(usage_ledger)').all().some((entry) => entry.name === column)) {
+      database.exec(`ALTER TABLE usage_ledger ADD COLUMN ${column} ${definition}`);
     }
   }
   database.exec('PRAGMA foreign_keys=ON');
@@ -637,7 +642,11 @@ export async function openCore(root, executor = null, executionPolicy) {
       await gitRun(['worktree', 'add', '--detach', workspace, baseCommit], { cwd: repositoryPath });
     } catch (error) {
       if (dirname(resolve(workspace)) !== resolve(workspacesDir)) throw new Error('Refusing to clean unexpected workspace path');
-      await rm(workspace, { recursive: true, force: true });
+      // Clean only what is demonstrably ours: a path that Git already registers
+      // as a worktree of this repository may belong to a concurrent winner.
+      const owned = await gitRun(['worktree', 'list', '--porcelain'], { cwd: repositoryPath })
+        .then((output) => output.split('\n').includes(`worktree ${workspace}`), () => false);
+      if (!owned) await rm(workspace, { recursive: true, force: true }).catch(() => {});
       await gitRun(['worktree', 'prune'], { cwd: repositoryPath }).catch(() => {});
       throw error;
     }
@@ -772,7 +781,18 @@ export async function openCore(root, executor = null, executionPolicy) {
       ...(worktreeRemovalDetail ? { worktreeRemovalDetail } : {}) };
   };
   const integrationManifestPath = (id) => join(taskDir, id, 'PRE-INTEGRATION', 'manifest.json');
-  const integrateWorkspace = async (id, snapshotId) => {
+  // Integration and rollback mutate the project source tree; running two of
+  // them concurrently on one task would race the checks-then-write windows
+  // against each other. One in-process lock per task serializes them (the
+  // single-daemon assumption is what makes an in-process lock sufficient).
+  const integrationLocks = new Map();
+  const withIntegrationLock = (id, action) => {
+    const previous = integrationLocks.get(id) ?? Promise.resolve();
+    const next = previous.then(action, action);
+    integrationLocks.set(id, next.catch(() => {}));
+    return next;
+  };
+  const integrateWorkspace = async (id, snapshotId) => withIntegrationLock(id, async () => {
     const task = get(id);
     if (task.state !== 'COMPLETED') throw new Error(`Only a completed task can integrate; ${task.state} must reconcile first`);
     if (await lstat(integrationManifestPath(id)).then(() => true, (error) => {
@@ -842,8 +862,8 @@ export async function openCore(root, executor = null, executionPolicy) {
     }
     transaction(database, () => { event(id, 'integration.completed'); });
     return { integrated: true, taskId: id, snapshotId, files: written, manifestSha256: createHash('sha256').update(JSON.stringify(manifest)).digest('hex') };
-  };
-  const rollbackIntegration = async (id) => {
+  });
+  const rollbackIntegration = async (id) => withIntegrationLock(id, async () => {
     const task = get(id);
     if (task.state !== 'COMPLETED') throw new Error(`Only a completed task can roll back; ${task.state} must reconcile first`);
     if (database.prepare("SELECT 1 FROM events WHERE task_id=? AND kind='integration.rolled_back'").get(id)) {
@@ -886,7 +906,7 @@ export async function openCore(root, executor = null, executionPolicy) {
     }
     transaction(database, () => { event(id, 'integration.rolled_back'); });
     return { rolledBack: true, taskId: id, files: manifest.files.map(({ path }) => path) };
-  };
+  });
   const dispatch = (id) => {
     if (!executor) throw new Error('External execution is disabled until Phase 0 safety checks pass');
     const task = get(id);
@@ -1075,20 +1095,25 @@ export async function openCore(root, executor = null, executionPolicy) {
             recordUsage(agent, usage, model) {
               if (closed) throw new Error('Core is closed');
               if (!['dsh', 'codex'].includes(agent)) throw new Error('Unknown agent');
-              const inputTokens = Number(usage?.inputTokens ?? usage?.input_tokens ?? usage?.used);
-              const outputTokens = Number(usage?.outputTokens ?? usage?.output_tokens ?? 0);
-              if (!Number.isSafeInteger(inputTokens) || inputTokens < 0 ||
-                !Number.isSafeInteger(outputTokens) || outputTokens < 0) {
-                throw new Error('Usage must carry nonnegative integer token counts');
+              const isContext = agent === 'dsh' && usage?.used !== undefined && usage?.size !== undefined;
+              const count = (value) => Number.isSafeInteger(value) && value >= 0;
+              const inputTokens = isContext ? 0 : usage?.inputTokens ?? usage?.input_tokens;
+              const outputTokens = isContext ? 0 : usage?.outputTokens ?? usage?.output_tokens;
+              const contextTokens = isContext ? usage.used : null;
+              const contextCapacity = isContext ? usage.size : null;
+              if (!count(inputTokens) || !count(outputTokens) || (isContext &&
+                (!count(contextTokens) || !count(contextCapacity) || contextTokens > contextCapacity))) {
+                throw new Error('Usage must carry nonnegative integer counts with valid context capacity');
               }
-              const contextTokens = Number.isSafeInteger(Number(usage?.size)) ? Number(usage.size) : null;
+              const usageKind = isContext ? 'context' : 'tokens';
               const safeModel = model === undefined || model === null ? null : String(model).slice(0, 128);
               transaction(database, () => {
-                database.prepare('INSERT INTO usage_ledger(task_id,agent,model,input_tokens,output_tokens,context_tokens,source,recorded_at) VALUES(?,?,?,?,?,?,?,?)')
-                  .run(id, agent, safeModel, inputTokens, outputTokens, contextTokens, 'executor', now());
+                database.prepare('INSERT INTO usage_ledger(task_id,agent,model,input_tokens,output_tokens,context_tokens,source,recorded_at,usage_kind,context_capacity) VALUES(?,?,?,?,?,?,?,?,?,?)')
+                  .run(id, agent, safeModel, inputTokens, outputTokens, contextTokens, 'executor', now(), usageKind, contextCapacity);
                 event(id, 'usage.recorded');
               });
-              return { recorded: true, inputTokens, outputTokens };
+              return { recorded: true, usageKind, inputTokens: isContext ? null : inputTokens,
+                outputTokens: isContext ? null : outputTokens, contextTokens, contextCapacity };
             }
           }, api);
           requireActive();
@@ -1135,7 +1160,7 @@ export async function openCore(root, executor = null, executionPolicy) {
     if (typeof expectedSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(expectedSha256)) {
       throw new Error('Provide the current memory file SHA-256 to prevent concurrent overwrite');
     }
-    mkdir(memoryDir, { recursive: true });
+    mkdirSync(memoryDir, { recursive: true });
     const current = readFileSyncSafe(join(memoryDir, file)) ?? '';
     const currentSha256 = createHash('sha256').update(current).digest('hex');
     if (currentSha256 !== expectedSha256) {
@@ -1143,7 +1168,7 @@ export async function openCore(root, executor = null, executionPolicy) {
     }
     const version = (database.prepare('SELECT COALESCE(MAX(version),0) AS version FROM memory_versions WHERE file=?').get(file).version) + 1;
     const versionsDir = join(memoryDir, 'versions');
-    mkdir(versionsDir, { recursive: true });
+    mkdirSync(versionsDir, { recursive: true });
     if (current.length) writeFileSync(join(versionsDir, `${file.replace(/\.md$/, '')}-v${version}.md`), current, { flag: 'wx' });
     writeFileSync(join(memoryDir, file), `${current}${current.length ? '\n' : ''}${appendix}\n`);
     transaction(database, () => {
@@ -1157,13 +1182,58 @@ export async function openCore(root, executor = null, executionPolicy) {
     if (!memoryFiles.has(file)) throw new Error('Unknown memory file');
     return database.prepare('SELECT version,sha256,bytes,recorded_at AS recordedAt FROM memory_versions WHERE file=? ORDER BY version').all(file);
   };
+  // A crash between the integration file writes and the database event leaves
+  // the source tree and the journal disagreeing. The manifest carries the
+  // before/after hashes, so the fact can be established from disk: if every
+  // integrated file matches its "after" hash the integration did complete and
+  // only the journal entry is missing; if every file still matches "before"
+  // nothing was written. Mixed trees go to RECOVERY_REQUIRED for a human.
+  for (const { id } of database.prepare("SELECT id FROM tasks WHERE state='COMPLETED'").all()) {
+    const manifestPath = join(taskDir, id, 'PRE-INTEGRATION', 'manifest.json');
+    const manifestExists = await lstat(manifestPath).then(() => true, (error) => {
+      if (error.code === 'ENOENT') return false;
+      throw error;
+    });
+    if (!manifestExists) continue;
+    const hasJournal = database.prepare("SELECT 1 FROM events WHERE task_id=? AND kind IN ('integration.completed','integration.rolled_back','integration.failed','integration.rollback_failed')").get(id);
+    if (hasJournal) continue;
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    const states = [];
+    for (const file of manifest.files) {
+      const source = await readFileWithin(projectRoot, file.path);
+      const sha256 = createHash('sha256').update(source).digest('hex');
+      if (sha256 === file.afterSha256) states.push('after');
+      else if (sha256 === file.beforeSha256) states.push('before');
+      else states.push('changed');
+    }
+    transaction(database, () => {
+      if (states.every((state) => state === 'after')) {
+        event(id, 'integration.completed');
+      } else if (states.every((state) => state === 'before')) {
+        // Nothing was written; the site is clean for a deliberate re-integration.
+        event(id, 'integration.reconciliation_required');
+      } else {
+        // Partially written or tampered: only a human can decide what to keep.
+        database.prepare("UPDATE tasks SET state='RECOVERY_REQUIRED',updated_at=? WHERE id=? AND state='COMPLETED'").run(now(), id);
+        event(id, 'integration.reconciliation_required');
+      }
+    });
+  }
+
   const usageSummary = () => {
-    const entries = database.prepare('SELECT task_id AS taskId,agent,model,input_tokens AS inputTokens,output_tokens AS outputTokens,context_tokens AS contextTokens,recorded_at AS recordedAt FROM usage_ledger ORDER BY sequence').all();
+    const entries = database.prepare(`SELECT task_id AS taskId,agent,model,usage_kind AS usageKind,
+      CASE WHEN usage_kind='tokens' THEN input_tokens END AS inputTokens,
+      CASE WHEN usage_kind='tokens' THEN output_tokens END AS outputTokens,
+      CASE WHEN usage_kind='context' THEN context_tokens END AS contextTokens,
+      context_capacity AS contextCapacity,recorded_at AS recordedAt FROM usage_ledger ORDER BY sequence`).all();
     return { entries, totals: entries.reduce((sums, entry) => {
-      sums[entry.agent] ??= { inputTokens: 0, outputTokens: 0, calls: 0 };
-      sums[entry.agent].inputTokens += entry.inputTokens;
-      sums[entry.agent].outputTokens += entry.outputTokens;
-      sums[entry.agent].calls += 1;
+      const total = sums[entry.agent] ??= { inputTokens: null, outputTokens: null, records: 0, tokenRecords: 0 };
+      if (entry.usageKind === 'tokens') {
+        total.inputTokens = (total.inputTokens ?? 0) + entry.inputTokens;
+        total.outputTokens = (total.outputTokens ?? 0) + entry.outputTokens;
+        total.tokenRecords++;
+      }
+      total.records++;
       return sums;
     }, {}) };
   };
