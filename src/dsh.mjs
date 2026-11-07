@@ -106,7 +106,16 @@ export async function runDshProposal({ task, files, home, executable, apiKey, ac
 export async function runDshReviewTask({ core, task, context, executable, apiKey, accountHome, accountWorkspace, authHome, model },
   { propose = runDshProposal, review = runCodexReview, verifyCandidate } = {}) {
   context.signal.throwIfAborted();
-  const candidate = await core.verifyWorkspace(task.id);
+  // Replay after an in-flight pause: the previous run may have already applied
+  // its proposal to the candidate. Resetting the candidate to the current
+  // source makes the replay idempotent instead of failing on a stale check.
+  let candidate;
+  try {
+    candidate = await core.verifyWorkspace(task.id);
+  } catch (error) {
+    if (!/Workspace file changed/.test(error.message ?? '')) throw error;
+    candidate = await core.refreshWorkspaceFromSource(task.id);
+  }
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
   const files = [];
   let bytes = 0;

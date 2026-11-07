@@ -157,3 +157,57 @@ test('recovery-required tasks pause into a verified state and return through res
     assert.equal(tasks.state, 'PAUSED');
   });
 });
+
+test('a replay after pausing mid-review resets the applied candidate and completes', async () => {
+  // This is the exact site a real acceptance run discovered: pausing while the
+  // first review turn is in flight leaves the candidate already modified; the
+  // replayed run used to fail its own stale "pristine candidate" check.
+  const root = await mkdtemp(join(tmpdir(), 'relaycore-pause-replay-'));
+  let core;
+  let releaseFirst;
+  const gate = new Promise((done) => { releaseFirst = done; });
+  let entries = 0;
+  try {
+    await writeFile(join(root, 'message.txt'), 'pending\n');
+    core = await openCore(root, async (task, context) => {
+      entries++;
+      // Mirror the production executor: verify the candidate, and when a
+      // previous interrupted run left it modified, refresh it from source.
+      const inventory = await core.workspaceInventory();
+      const existing = inventory.registered.find((entry) => entry.taskId === task.id);
+      if (existing) {
+        try { await core.verifyWorkspace(task.id); }
+        catch { await core.refreshWorkspaceFromSource(task.id); }
+      } else {
+        await core.prepareWorkspace(task.id);
+      }
+      await core.applyWorkspaceProposal(task.id, [{ path: 'message.txt', contents: `ready ${entries}` + String.fromCharCode(10) }], context.signal);
+      const artifact = await core.prepareReviewWorkspace(task.id);
+      context.beginModelTurn('codex');
+      if (entries === 1) { await gate; context.signal.throwIfAborted(); }
+      return { handoff: `run ${entries} with snapshot ${artifact.snapshotId}` };
+    }, { maxDurationSeconds: 60, maxModelTurns: 4, costMode: 'unknown' });
+    const task = await core.create({ title: 'Replay task', objective: 'o', acceptance: 'a',
+      allowedPaths: ['message.txt'], executionLimits: { maxDurationSeconds: 60, maxModelTurns: 4 } });
+    core.authorizeExecution(task.id, { expiresAt: new Date(Date.now() + 120000).toISOString(), allowUnknownCost: true });
+    core.dispatch(task.id);
+    for (let attempt = 0; attempt < 400 && core.get(task.id).state !== 'RUNNING'; attempt++) await setTimeout(5);
+    for (let attempt = 0; attempt < 400 && !core.events(task.id).some((event) => event.kind === 'model_turn.requested.codex'); attempt++) await setTimeout(5);
+    // Pause lands while the first review turn is in flight.
+    assert.equal(core.pause(task.id).state, 'PAUSED');
+    releaseFirst();
+    for (let attempt = 0; attempt < 200 && core.get(task.id).state !== 'PAUSED'; attempt++) await setTimeout(5);
+    assert.equal(core.resume(task.id).state, 'QUEUED');
+    for (let attempt = 0; attempt < 600 && ['QUEUED', 'RUNNING'].includes(core.get(task.id).state); attempt++) await setTimeout(10);
+    const final = core.get(task.id);
+    assert.equal(final.state, 'COMPLETED');
+    assert.equal(await readFile(join(root, 'message.txt'), 'utf8'), 'pending\n');
+    assert.equal(final.result.includes('run 2'), true);
+    assert.deepEqual(core.events(task.id).filter((event) => event.kind === 'workspace.refreshed').length, 1);
+    // One codex turn per attempt: the interrupted first run and the replay.
+    assert.deepEqual(core.events(task.id).filter((event) => event.kind.startsWith('model_turn.requested.')).length, 2);
+  } finally {
+    core?.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});

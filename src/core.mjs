@@ -419,6 +419,42 @@ export async function openCore(root, executor = null, executionPolicy) {
     }
     return { workspace, files, registered: true, baselineSha256 };
   };
+  // Replay-after-pause support: the previous run may have applied its proposal
+  // to the candidate. Rewriting the candidate from the current source (and
+  // refreshing the registered baseline) makes a replay start clean without
+  // touching the user's real project files.
+  const refreshWorkspaceFromSource = async (id) => {
+    const task = get(id);
+    if (task.state !== 'RUNNING' || !policy) throw new Error('Workspace refresh requires a locally authorized running task');
+    requireAuthorization(task, true);
+    // Model-turn events from the interrupted attempt are expected here; the
+    // refresh exists precisely so a replay can start clean after them.
+    const registration = database.prepare('SELECT * FROM workspaces WHERE task_id=?').get(id);
+    if (!registration || registration.kind !== 'copy') throw new Error('Only a registered copy workspace can be refreshed');
+    const { paths, baseline } = await readBaseline(id);
+    const workspace = join(dataDir, 'workspaces', id);
+    const info = await lstat(workspace);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Workspace directory is not a plain directory');
+    const files = [];
+    let totalBytes = 0;
+    for (const path of paths) {
+      const contents = await readFileWithin(projectRoot, path);
+      totalBytes += contents.length;
+      if (totalBytes > 32 * 1024 * 1024) throw new Error('Workspace exceeds 32 MiB');
+      await writeFile(join(workspace, ...path.split('/')), contents);
+      files.push({ path, bytes: contents.length, sha256: createHash('sha256').update(contents).digest('hex') });
+    }
+    await writeFile(join(taskDir, id, 'BASELINE.json'),
+      JSON.stringify({ taskId: id, revision: task.contract.revision, files }, null, 2));
+    const baselineContents = await readFile(join(taskDir, id, 'BASELINE.json'));
+    const baselineSha256 = createHash('sha256').update(baselineContents).digest('hex');
+    transaction(database, () => {
+      database.prepare('UPDATE workspaces SET revision=?,baseline_sha256=? WHERE task_id=?')
+        .run(task.contract.revision, baselineSha256, id);
+      event(id, 'workspace.refreshed');
+    });
+    return { workspace, files, refreshed: true, baselineSha256 };
+  };
   const inspectWorkspaceChanges = async (id) => {
     await requireCopyWorkspace(id);
     const { paths, baseline } = await readBaseline(id);
@@ -1237,7 +1273,7 @@ export async function openCore(root, executor = null, executionPolicy) {
       return sums;
     }, {}) };
   };
-  const api = { create, createRevision, taskVersions, get, list, dispatch, stop, pause, resume, guide, consumeGuidance, authorizeExecution, prepareWorkspace, prepareGitWorktree, inspectWorktreeChanges, verifyWorkspace, applyWorkspaceProposal, inspectWorkspaceChanges, inspectSourceConflicts, prepareReviewWorkspace, reviewSnapshots, verifyReviewedWorkspace, workspaceInventory, discardWorkspace, integrateWorkspace, rollbackIntegration, usageSummary, memoryRead, memoryAppend, memoryHistory,
+  const api = { create, createRevision, taskVersions, get, list, dispatch, stop, pause, resume, guide, consumeGuidance, authorizeExecution, prepareWorkspace, prepareGitWorktree, inspectWorktreeChanges, verifyWorkspace, applyWorkspaceProposal, inspectWorkspaceChanges, inspectSourceConflicts, prepareReviewWorkspace, reviewSnapshots, verifyReviewedWorkspace, workspaceInventory, discardWorkspace, integrateWorkspace, rollbackIntegration, refreshWorkspaceFromSource, usageSummary, memoryRead, memoryAppend, memoryHistory,
     events: (id) => database.prepare('SELECT sequence,kind,created_at AS createdAt FROM events WHERE task_id=? ORDER BY sequence').all(id),
     close: () => {
       closed = true;
