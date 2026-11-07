@@ -94,24 +94,15 @@ try {
 
 `local/`、`.RelayCore/`、`node_modules/` 均不跟踪。运行时工作区和本地笔记不会随 Git 克隆获得；切换或清理工作区前请确认需要保留的文件。
 
-## 生产模式与 Web 控制台
+## 一键启动与 Web 控制台
 
-默认 `npm start` 启动的 Daemon **外部执行保持禁用**（日志显示 `external execution disabled`）。显式通过环境变量启用账户执行路线后，同一 Daemon 获得 MCP 派发、CLI 操作与本地控制台的全部能力：
+**日常使用只需一条命令**：在项目目录运行 `npm start`。
 
-| 环境变量 | 含义 |
-|---|---|
-| `RELAYCORE_EXECUTION=account` | 启用 DSH 账户执行路线；任何其他值保持禁用 |
-| `RELAYCORE_DSH_EXE` | DSH 可执行文件绝对路径（启用时必填） |
-| `RELAYCORE_ACCOUNT_WORKSPACE` | DSH 账户路线的测试工作区绝对路径（启用时必填） |
-| `RELAYCORE_MAX_DURATION` / `RELAYCORE_MAX_TURNS` | 任务总时长（默认 600 秒）与模型回合上限（默认 2） |
-| `RELAYCORE_REVIEW_AUTH_HOME` | 独立审查登录目录；默认取安装目录的 `.RelayCore/codex-review-home` |
-| `RELAYCORE_ROOT` / `RELAYCORE_PORT` / `RELAYCORE_TOKEN` | 项目根、监听端口（默认 8765）、显式控制口令 |
-
-派发仍受**本地授权闸门**约束：先 `node src/control.mjs authorize TASK-ID 600 --allow-unknown-cost`（E2 任务还须加 `--e2-approved`；两者都是分项同意，服务端校验缺一拒绝），再 `dispatch TASK-ID`；授权一次性、绑定合约哈希并计入有效期。任务运行中可用 `guide TASK-ID 文本` 追加指导（不中断当前回合，并入下一次真实提示）、`pause`/`resume`（预算跨暂停累计）、`stop`、以及审查批准后的 `integrate TASK-ID SNAPSHOT`（整合）与 `rollback TASK-ID`（一次性回滚）。`node src/doctor.mjs <DSH exe>` 做零模型安装自检。
-
-浏览器打开 `http://127.0.0.1:8765/ui` 是本地控制台，**需要登录**：先在运行 Daemon 的同一用户终端执行 `node src/control.mjs ui-session` 获取一次性会话令牌（8 小时有效，Daemon 重启即失效），粘贴到登录页换发 HttpOnly 会话 cookie；长期控制口令不会进入网页、cookie 或日志。登录后可见任务列表与状态化操作按钮（授权为逐项 checkbox、追加引导）；`/usage` 将 DSH 上下文占用/容量与 Codex 输入/输出 tokens 分开显示，`—` 表示未知，不代表零消耗，金额以服务账单为准。HTTP Host 只接受真实监听端口的 `127.0.0.1` 或 `localhost`，浏览器动作另校验 Origin/Sec-Fetch-Site。未登录访问者只能看到登录页，任务内容零暴露；已登录会话仍受"同机其他进程可达本地端口"的边界限制。关掉网页不影响后台任务。
-
-任务完成（审查批准）后候选不会自动合并：整合是显式操作，整合前自动备份每个源文件到 `PRE-INTEGRATION/`，写失败自动恢复并转 `RECOVERY_REQUIRED`；回滚是一次性的，且源文件在整合后被再次修改时拒绝执行。
+- **首次使用**：终端会打印一条"控制台配对链接"并自动打开浏览器（10 分钟内点击有效、一次性）。登录后控制台顶部有"首次设置"表单——填写 DSH 可执行文件路径与 DSH 账户工作区并保存（配置写入 `.RelayCore/bridge/config.json`，不含任何密钥），然后关闭程序重新运行 `npm start`——Daemon 将以执行模式启动，再次点击终端里的新配对链接即可。
+- **日常操作全部在网页里**：新建任务（标题/目标/验收/允许路径）→ 展开授权并逐项勾选（同意未知费用；E2 任务另需 L3 同意）→ 派发 → 运行中可暂停/恢复/停止/追加引导 → 完成后点"整合"（自动使用最新审查快照，无需手动找 ID）→ 需要撤销时点"回滚"。"用量分账"页面分开展示 DSH 上下文占用与 Codex 输入/输出 tokens。
+- **环境变量仍可覆盖配置**：`RELAYCORE_ROOT`（项目根，默认当前目录）、`RELAYCORE_PORT`（默认 8765）、`RELAYCORE_MAX_DURATION`/`RELAYCORE_MAX_TURNS`、`RELAYCORE_REVIEW_AUTH_HOME`；`RELAYCORE_EXECUTION=account` 与 `RELAYCORE_DSH_EXE`/`RELAYCORE_ACCOUNT_WORKSPACE` 优先于 config.json。`RELAYCORE_NO_OPEN=1` 阻止自动打开浏览器。
+- **登录的其他方式**：配对链接过期后，在运行 Daemon 的终端执行 `node src/control.mjs ui-session` 获取一次性令牌手动登录；CLI 仍支持完整操作（create/authorize/dispatch/integrate/rollback 等）。
+- **信任边界**：控制台绑定本机回环 + 一次性配对 + 会话 cookie，跨站请求结构性拒绝；但能访问本机端口的进程仍属同一信任级别（DPAPI 只隔离其他 Windows 用户）。"同意未知费用"是金额无法硬封顶情况下的显式用户确认。
 
 ## 兼容与故障排查
 

@@ -80,12 +80,17 @@ test('the console requires a session issued to the control-token holder', async 
     const badLogin = await login(state, randomBytes(24).toString('hex'));
     assert.equal(badLogin.status, 401);    // A real session works end to end.
     const sessionToken = await requestSession(state);
+    const pendingAction = await consoleAction(state, sessionToken, { id: task.id, action: 'authorize', allowUnknownCost: true });
+    assert.equal(pendingAction.status, 401);
+    const pendingPage = await fetch(`http://127.0.0.1:${state.port}/ui`, { headers: { cookie: `relaycore_ui=${sessionToken}` } });
+    assert.equal((await pendingPage.text()).includes(task.id), false);
     const loginResponse = await login(state, sessionToken);
     assert.equal(loginResponse.status, 200);
     const setCookie = loginResponse.headers.get('set-cookie');
     assert.match(setCookie, /relaycore_ui=/);
     assert.match(setCookie, /HttpOnly/);
     const cookie = /relaycore_ui=([^;]+)/.exec(setCookie)[1];
+    assert.equal((await login(state, cookie)).status, 401);
     const authenticated = await fetch(`http://127.0.0.1:${state.port}/ui`, { headers: { cookie: `relaycore_ui=${cookie}` } });
     assert.equal((await authenticated.text()).includes(task.id), true);
     // Login consumes the one-time session token.
