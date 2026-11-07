@@ -74,7 +74,8 @@ test('missing, forged and over-budget approvals cannot dispatch or reserve promp
     assert.throws(() => state.core.dispatch(forged.id), /local execution authorization/);
     for (const executionLimits of [undefined, { maxDurationSeconds: 31, maxModelTurns: 2 }, { maxDurationSeconds: 10, maxModelTurns: 3 }]) {
       const task = await state.core.create({ ...contract, executionLimits });
-      assert.throws(() => state.core.authorizeExecution(task.id, approval()), /policy budget/);
+      assert.throws(() => state.core.authorizeExecution(task.id, approval()),
+        executionLimits ? /policy budget: requested .*maximum 30s\/2 turns/ : /Declare executionLimits/);
       assert.equal(state.core.get(task.id).state, 'DRAFT');
       assert.deepEqual(state.core.events(task.id).map((entry) => entry.kind), ['task.created']);
     }

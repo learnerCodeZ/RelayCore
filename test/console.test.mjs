@@ -85,6 +85,60 @@ test('console actions refuse cross-site requests structurally', async () => {
   });
 });
 
+test('console-created tasks use the active policy defaults and can be authorized', async () => {
+  await withConsole(async (state) => {
+    const response = await consoleAction(state, { ...contract, executionLimits: undefined, action: 'create' });
+    assert.equal(response.status, 200);
+    const task = await response.json();
+    assert.deepEqual(task.contract.executionLimits, { maxDurationSeconds: 30, maxModelTurns: 3 });
+    assert.equal((await consoleAction(state, { id: task.id, action: 'authorize', allowUnknownCost: true })).status, 200);
+    const explicit = await consoleAction(state, { ...contract, action: 'create',
+      executionLimits: { maxDurationSeconds: 12, maxModelTurns: 1 } });
+    assert.equal(explicit.status, 200);
+    assert.deepEqual((await explicit.json()).contract.executionLimits, { maxDurationSeconds: 12, maxModelTurns: 1 });
+  });
+});
+
+test('missing limits can be repaired in a new draft without inheriting execution consent', async () => {
+  await withConsole(async (state) => {
+    const parent = await state.daemon.core.create({ ...contract, riskLevel: 'E2', executionLimits: undefined });
+    const missing = await consoleAction(state, { id: parent.id, action: 'authorize', allowUnknownCost: true, e2Approved: true });
+    assert.equal(missing.status, 400);
+    assert.match((await missing.json()).error, /Declare executionLimits/);
+    for (const executionLimits of [null, { maxDurationSeconds: 0, maxModelTurns: 1 },
+      { maxDurationSeconds: 31, maxModelTurns: 1 }, { maxDurationSeconds: 10, maxModelTurns: 4 }]) {
+      const invalid = await consoleAction(state, { id: parent.id, action: 'limits', expectedRevision: 1, executionLimits });
+      assert.equal(invalid.status, 400);
+      assert.equal(state.daemon.core.list().length, 1);
+    }
+    const limits = { maxDurationSeconds: 10, maxModelTurns: 2 };
+    const saved = await consoleAction(state, { id: parent.id, action: 'limits', expectedRevision: 1, executionLimits: limits });
+    assert.equal(saved.status, 200);
+    const task = await saved.json();
+    assert.notEqual(task.id, parent.id);
+    assert.equal(task.state, 'DRAFT');
+    assert.deepEqual(task.contract, { ...parent.contract, executionLimits: limits, revision: 2 });
+    assert.equal(task.executionAuthorization, undefined);
+    assert.equal(state.daemon.core.get(parent.id).contract.executionLimits, null);
+    const oldGrant = await consoleAction(state, { id: parent.id, action: 'authorize', allowUnknownCost: true, e2Approved: true });
+    assert.equal(oldGrant.status, 400);
+    assert.match((await oldGrant.json()).error, /newer revision/);
+    assert.equal((await consoleAction(state, { id: task.id, action: 'dispatch' })).status, 400);
+    assert.equal((await consoleAction(state, { id: task.id, action: 'authorize' })).status, 400);
+    assert.equal((await consoleAction(state, { id: task.id, action: 'authorize', allowUnknownCost: true })).status, 400);
+    assert.equal(state.daemon.core.get(task.id).executionAuthorization, undefined);
+    const page = await fetch(`http://127.0.0.1:${state.port}/ui`, { headers: { cookie: state.cookie } });
+    const html = await page.text();
+    assert.ok(html.includes(`data-limit-seconds="${task.id}"`));
+    assert.ok(html.includes(`data-limit-turns="${task.id}"`));
+    assert.ok(!html.includes(`data-action="authorize" data-id="${parent.id}"`));
+    assert.match(html, /执行策略上限：30 秒 \/ 3 轮/);
+    const { Script } = await import('node:vm');
+    for (const [, script] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) new Script(script);
+    assert.equal((await consoleAction(state, { id: task.id, action: 'authorize', allowUnknownCost: true, e2Approved: true })).status, 200);
+  });
+});
+
 async function readToken(root) {
   const { getControlToken } = await import('../src/auth.mjs');
   return getControlToken(root, { create: false });

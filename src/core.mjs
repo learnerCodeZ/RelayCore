@@ -218,7 +218,10 @@ export async function openCore(root, executor = null, executionPolicy) {
   };
   const checkPolicyLimits = (task) => {
     const limits = declaredLimits(task.contract.executionLimits ?? undefined);
-    if (!limits || limits.maxDurationSeconds > policy.maxDurationSeconds || limits.maxModelTurns > policy.maxModelTurns) throw new Error('Task exceeds execution policy budget');
+    if (!limits) throw new Error('Declare executionLimits before authorization or dispatch');
+    if (limits.maxDurationSeconds > policy.maxDurationSeconds || limits.maxModelTurns > policy.maxModelTurns) {
+      throw new Error(`Task exceeds execution policy budget: requested ${limits.maxDurationSeconds}s/${limits.maxModelTurns} turns; maximum ${policy.maxDurationSeconds}s/${policy.maxModelTurns} turns`);
+    }
     return limits;
   };
   const requireAuthorization = (task, consumed) => {

@@ -248,12 +248,20 @@ document.getElementById('f').addEventListener('submit', async (event) => {
         }
         const tasks = core.list();
         const executionEnabled = Boolean(executor);
+        const defaultLimits = { maxDurationSeconds: executionPolicy?.maxDurationSeconds ?? 600,
+          maxModelTurns: executionPolicy?.maxModelTurns ?? 2 };
         const rows = tasks.map((entry) => {
           let contract = {};
-          try { contract = core.get(entry.id).contract; } catch { }
+          let supersededBy;
+          try { ({ contract, supersededBy } = core.get(entry.id)); } catch { }
           const risk = contract.riskLevel ?? 'E1';
-          const stateActions = {
-            DRAFT: `<details><summary>授权…</summary><label><input type="checkbox" data-consent-cost="${entry.id}">同意未知费用（必勾）</label><br>` +
+          const limits = contract.executionLimits ?? defaultLimits;
+          const stateActions = entry.state === 'DRAFT' && supersededBy ? `已替换为 ${supersededBy}` : {
+            DRAFT: `<details><summary>执行上限…</summary>` +
+              `<label>最长秒数：<input type="number" min="1" max="${defaultLimits.maxDurationSeconds}" value="${limits.maxDurationSeconds}" data-limit-seconds="${entry.id}"></label><br>` +
+              `<label>模型轮数：<input type="number" min="1" max="${defaultLimits.maxModelTurns}" value="${limits.maxModelTurns}" data-limit-turns="${entry.id}"></label><br>` +
+              `<button data-action="limits" data-id="${entry.id}" data-revision="${contract.revision}">保存上限（新草稿）</button></details><br>` +
+              `<details><summary>授权…</summary><label><input type="checkbox" data-consent-cost="${entry.id}">同意未知费用（必勾）</label><br>` +
               `<label><input type="checkbox" data-consent-e2="${entry.id}">E2 高危 L3 同意（仅 E2 任务）</label><br>` +
               `<button data-action="authorize" data-id="${entry.id}">确认授权</button></details> ` +
               `<button data-action="dispatch" data-id="${entry.id}">派发</button>` +
@@ -269,7 +277,7 @@ document.getElementById('f').addEventListener('submit', async (event) => {
           }[entry.state] ?? '';
           return `<tr><td>${entry.id}</td><td>${entry.state}</td><td>${risk}</td>` +
             `<td>${escapeHtml(contract.title ?? '')}</td><td>${escapeHtml(contract.objective ?? '')}</td>` +
-            `<td>${stateActions}</td>` +
+            `<td>${contract.executionLimits ? `${limits.maxDurationSeconds} 秒 / ${limits.maxModelTurns} 轮` : '未声明执行上限，请先保存'}<br>${stateActions}</td>` +
             `<td><input type="text" placeholder="追加引导" data-guide="${entry.id}" size="18">` +
             `<button data-action="guide" data-id="${entry.id}">引导</button></td></tr>`;
         }).join('');
@@ -287,11 +295,14 @@ document.getElementById('f').addEventListener('submit', async (event) => {
           `<h1>RelayCore 控制台</h1>` +
           `<p>执行状态：<b>${executionEnabled ? '已启用（账户路线）' : '未启用——请在下方完成首次设置'}</b>。` +
           `授权需要逐项确认：消耗模型额度须勾选"同意未知费用"；E2 高危任务另需单独勾选 L3 同意。操作仅限本机。</p>` +
+          `<p>执行策略上限：${defaultLimits.maxDurationSeconds} 秒 / ${defaultLimits.maxModelTurns} 轮。保存上限会生成新草稿，需在新草稿上重新授权。</p>` +
           `${setupWizard}` +
           `${executionEnabled ? `<details><summary>新建任务</summary><fieldset>` +
             `标题：<input type="text" id="new-title" size="40"><br>目标：<input type="text" id="new-objective" size="60"><br>` +
             `验收标准：<input type="text" id="new-acceptance" size="60"><br>` +
             `允许路径（逗号分隔，如 message.txt,src/a.js）：<input type="text" id="new-paths" size="40"><br>` +
+            `最长秒数：<input type="number" id="new-seconds" min="1" max="${defaultLimits.maxDurationSeconds}" value="${defaultLimits.maxDurationSeconds}"><br>` +
+            `模型轮数：<input type="number" id="new-turns" min="1" max="${defaultLimits.maxModelTurns}" value="${defaultLimits.maxModelTurns}"><br>` +
             `<button id="create-task">创建草稿</button></fieldset></details>` : ''}` +
           `<table><tr><th>ID</th><th>状态</th><th>风险</th><th>标题</th><th>目标</th><th>操作</th><th>引导</th></tr>${rows}</table>` +
           `<p><button id="refresh">刷新</button> <a href="/usage">用量分账</a></p><div id="msg"></div>` +
@@ -302,6 +313,12 @@ document.getElementById('f').addEventListener('submit', async (event) => {
     const id = button.dataset.id;
     const action = button.dataset.action;
     const body = { id, action };
+    if (action === 'limits') {
+      body.expectedRevision = Number(button.dataset.revision);
+      body.executionLimits = {
+        maxDurationSeconds: Number(document.querySelector('[data-limit-seconds="' + id + '"]').value),
+        maxModelTurns: Number(document.querySelector('[data-limit-turns="' + id + '"]').value) };
+    }
     if (action === 'authorize') {
       body.allowUnknownCost = document.querySelector('[data-consent-cost="' + id + '"]').checked;
       body.e2Approved = document.querySelector('[data-consent-e2="' + id + '"]').checked;
@@ -335,7 +352,9 @@ document.getElementById('f').addEventListener('submit', async (event) => {
       title: document.getElementById('new-title').value,
       objective: document.getElementById('new-objective').value,
       acceptance: document.getElementById('new-acceptance').value,
-      allowedPaths: document.getElementById('new-paths').value.split(',').map((p) => p.trim()).filter(Boolean) };
+      allowedPaths: document.getElementById('new-paths').value.split(',').map((p) => p.trim()).filter(Boolean),
+      executionLimits: { maxDurationSeconds: Number(document.getElementById('new-seconds').value),
+        maxModelTurns: Number(document.getElementById('new-turns').value) } };
     try {
       const response = await fetch('/ui/action', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       const data = await response.json();
@@ -361,7 +380,20 @@ document.getElementById('f').addEventListener('submit', async (event) => {
               const acceptance = String(input.acceptance ?? '').trim();
               const paths = Array.isArray(input.allowedPaths) ? input.allowedPaths : [];
               return core.create({ title, objective, acceptance, allowedPaths: paths,
-                executionLimits: { maxDurationSeconds: 600, maxModelTurns: 3 } });
+                executionLimits: input.executionLimits ?? {
+                  maxDurationSeconds: executionPolicy?.maxDurationSeconds ?? 600,
+                  maxModelTurns: executionPolicy?.maxModelTurns ?? 2 } });
+            }
+            case 'limits': {
+              const task = core.get(id);
+              if (task.state !== 'DRAFT') throw new Error('Only a draft can change execution limits');
+              if (!input.executionLimits) throw new Error('Declare executionLimits before saving');
+              if (executionPolicy && (input.executionLimits.maxDurationSeconds > executionPolicy.maxDurationSeconds ||
+                input.executionLimits.maxModelTurns > executionPolicy.maxModelTurns)) {
+                throw new Error(`Task exceeds execution policy budget: maximum ${executionPolicy.maxDurationSeconds}s/${executionPolicy.maxModelTurns} turns`);
+              }
+              return core.createRevision(id, { expectedRevision: input.expectedRevision,
+                reason: 'Set execution limits before local authorization.', executionLimits: input.executionLimits });
             }
             case 'authorize': {
               // Separate consents, validated server-side in repair order:
