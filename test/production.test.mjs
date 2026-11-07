@@ -229,7 +229,7 @@ test('an unconfigured production daemon keeps external execution disabled', asyn
     const script = fileURLToPath(new URL('../src/daemon.mjs', import.meta.url));
     const spawned = spawnSync(process.execPath, [script], {
       encoding: 'utf8', timeout: 5000, windowsHide: true,
-      env: { ...process.env, RELAYCORE_ROOT: root },
+      env: { ...process.env, RELAYCORE_ROOT: root, RELAYCORE_PORT: String(19000 + (process.pid % 2000)) },
       input: ''
     });
     assert.match(spawned.stderr, /external execution disabled/);
