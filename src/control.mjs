@@ -3,8 +3,22 @@ import { call } from './client.mjs';
 const [command, id, value] = process.argv.slice(2);
 const route = id ? `/tasks/${id}` : '/tasks';
 if (id && !/^TASK-[0-9a-f-]{36}$/.test(id)) throw new Error('Invalid task ID');
+const option = (name) => {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+};
 let result;
-if (command === 'ui-session' && !id) result = await call('POST', '/ui/session');
+if (command === 'create' && !id) {
+  const title = option('--title');
+  const objective = option('--objective');
+  const acceptance = option('--acceptance');
+  if (!title || !objective || !acceptance) throw new Error('create requires --title, --objective and --acceptance');
+  const paths = option('--paths')?.split(',').map((path) => path.trim()).filter(Boolean);
+  result = await call('POST', '/tasks', { title, objective, acceptance,
+    ...(paths?.length ? { allowedPaths: paths } : {}),
+    executionLimits: { maxDurationSeconds: Number(option('--seconds') ?? 600), maxModelTurns: Number(option('--turns') ?? 3) } });
+}
+else if (command === 'ui-session' && !id) result = await call('POST', '/ui/session');
 else if (command === 'list' && !id) result = await call('GET', route);
 else if (command === 'status' && id) result = await call('GET', route);
 else if (command === 'events' && id) result = await call('GET', `${route}/events`);
@@ -31,5 +45,5 @@ else if (command === 'authorize' && id) {
 else if (command === 'integrate' && id && value) result = await call('POST', `${route}/integrate`, { snapshotId: value });
 else if (command === 'rollback' && id) result = await call('POST', `${route}/rollback`);
 else if (command === 'discard-workspace' && id) result = await call('POST', `${route}/discard-workspace`);
-else throw new Error('Usage: node src/control.mjs ui-session | list | inventory | status ID | events ID | dispatch ID | authorize ID [seconds] [--allow-unknown-cost] [--e2-approved] | guide ID TEXT | pause ID | resume ID | stop ID | integrate ID SNAPSHOT | rollback ID | discard-workspace ID');
+else throw new Error('Usage: node src/control.mjs create --title T --objective O --acceptance A [--paths a,b] | ui-session | list | inventory | status ID | events ID | dispatch ID | authorize ID [seconds] [--allow-unknown-cost] [--e2-approved] | guide ID TEXT | pause ID | resume ID | stop ID | integrate ID SNAPSHOT | rollback ID | discard-workspace ID');
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
