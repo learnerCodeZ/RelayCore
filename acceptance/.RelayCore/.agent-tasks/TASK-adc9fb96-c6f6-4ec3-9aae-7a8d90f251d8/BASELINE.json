@@ -1,0 +1,11 @@
+{
+  "taskId": "TASK-adc9fb96-c6f6-4ec3-9aae-7a8d90f251d8",
+  "revision": 1,
+  "files": [
+    {
+      "path": "message.txt",
+      "bytes": 8,
+      "sha256": "52d26753462488ad21852bc6718e21b84835f53765304d0a1e1b89d05a2a71b1"
+    }
+  ]
+}

@@ -99,8 +99,8 @@ try {
 **日常使用只需一条命令**：在项目目录运行 `npm start`。
 
 - **首次使用**：终端会打印一条"控制台配对链接"并自动打开浏览器（10 分钟内点击有效、一次性）。登录后控制台顶部有"首次设置"表单——填写 DSH 可执行文件路径与 DSH 账户工作区并保存（配置写入 `.RelayCore/bridge/config.json`，不含任何密钥），然后关闭程序重新运行 `npm start`——Daemon 将以执行模式启动，再次点击终端里的新配对链接即可。
-- **日常操作全部在网页里**：新建任务（标题/目标/验收/允许路径）→ 展开授权并逐项勾选（同意未知费用；E2 任务另需 L3 同意）→ 派发 → 运行中可暂停/恢复/停止/追加引导 → 完成后点"整合"（自动使用最新审查快照，无需手动找 ID）→ 需要撤销时点"回滚"。"用量分账"页面分开展示 DSH 上下文占用与 Codex 输入/输出 tokens。
-- **环境变量仍可覆盖配置**：`RELAYCORE_ROOT`（项目根，默认当前目录）、`RELAYCORE_PORT`（默认 8765）、`RELAYCORE_MAX_DURATION`/`RELAYCORE_MAX_TURNS`、`RELAYCORE_REVIEW_AUTH_HOME`；`RELAYCORE_EXECUTION=account` 与 `RELAYCORE_DSH_EXE`/`RELAYCORE_ACCOUNT_WORKSPACE` 优先于 config.json。`RELAYCORE_NO_OPEN=1` 阻止自动打开浏览器。
+- **日常操作全部在网页里**：新建任务（标题/目标/验收/允许路径）→ 展开授权并逐项勾选（同意未知费用；E2 任务另需 L3 同意）→ 派发 → 运行中可暂停/恢复/停止/追加引导 → 完成后点"整合"（自动使用最新审查快照，无需手动找 ID）→ 需要撤销时点"回滚"。以上全部操作均可在网页内完成，无需命令行。"用量分账"页面分开展示 DSH 上下文占用与 Codex 输入/输出 tokens。
+- **环境变量仍可覆盖配置**：`RELAYCORE_ROOT`（项目根，默认当前目录）、`RELAYCORE_PORT`（默认 8765）、`RELAYCORE_MAX_DURATION`/`RELAYCORE_MAX_TURNS`、`RELAYCORE_REVIEW_AUTH_HOME`；`RELAYCORE_EXECUTION=account` 与 `RELAYCORE_DSH_EXE`/`RELAYCORE_ACCOUNT_WORKSPACE` 优先于 config.json。终端只打印配对链接，**不自动弹出浏览器**；需要自动打开时设 `RELAYCORE_OPEN=1`。
 - **登录的其他方式**：配对链接过期后，在运行 Daemon 的终端执行 `node src/control.mjs ui-session` 获取一次性令牌手动登录；CLI 仍支持完整操作（create/authorize/dispatch/integrate/rollback 等）。
 - **信任边界**：控制台绑定本机回环 + 一次性配对 + 会话 cookie，跨站请求结构性拒绝；但能访问本机端口的进程仍属同一信任级别（DPAPI 只隔离其他 Windows 用户）。"同意未知费用"是金额无法硬封顶情况下的显式用户确认。
 

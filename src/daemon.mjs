@@ -485,7 +485,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   // ten minutes; opening it in the browser lands directly on the console.
   const pairingUrl = `http://127.0.0.1:${actualPort}/ui?pairing=${daemon.issuePairing()}`;
   process.stderr.write(`控制台配对链接（10 分钟内点击有效）: ${pairingUrl}\n`);
-  if (!process.env.RELAYCORE_NO_OPEN && process.platform === 'win32') {
+  // The pairing link is printed for one-click sign-in; the browser is not
+  // launched automatically (opt in with RELAYCORE_OPEN=1).
+  if (process.env.RELAYCORE_OPEN === '1' && process.platform === 'win32') {
     const { exec } = await import('node:child_process');
     exec(`start "" "${pairingUrl}"`, () => {});
   }

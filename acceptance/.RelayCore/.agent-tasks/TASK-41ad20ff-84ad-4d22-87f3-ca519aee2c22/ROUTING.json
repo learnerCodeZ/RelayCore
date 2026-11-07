@@ -1,0 +1,7 @@
+{
+  "taskId": "TASK-41ad20ff-84ad-4d22-87f3-ca519aee2c22",
+  "executionLevel": "E1",
+  "adapterKind": "dsh-acp-account",
+  "riskReason": "declared isolated code changes; candidate-copy workspace with read-only DSH policy",
+  "recordedAt": "2026-11-07T12:55:33.260Z"
+}

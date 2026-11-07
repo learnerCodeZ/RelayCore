@@ -143,7 +143,7 @@ test('npm start prints a pairing link and honors config.json execution mode', as
       dshExe: process.execPath, accountWorkspace: root }));
     const child = spawn(process.execPath, [fileURLToPath(new URL('../src/daemon.mjs', import.meta.url))], {
       cwd: root, env: { ...process.env, RELAYCORE_ROOT: root,
-        RELAYCORE_PORT: String(18000 + (process.pid % 2000)), RELAYCORE_NO_OPEN: '1' },
+        RELAYCORE_PORT: String(18000 + (process.pid % 2000)) },
       stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     child.stderr.setEncoding('utf8');

@@ -1,0 +1,25 @@
+{
+  "taskId": "TASK-41ad20ff-84ad-4d22-87f3-ca519aee2c22",
+  "revision": 1,
+  "objective": "Change message.txt to exactly ready followed by one newline.",
+  "acceptance": "Only message.txt changes.",
+  "files": [
+    {
+      "path": "message.txt",
+      "before": "pending\n",
+      "after": "ready\n"
+    }
+  ],
+  "testEvidence": {
+    "origin": "relaycore-host",
+    "checker": "demo-exact-check",
+    "checks": [
+      {
+        "name": "message becomes ready",
+        "passed": true
+      }
+    ],
+    "candidateSha256": "5687b67474f2d8b9582377161858de43054eca830b4b1434a2b03f6ed9db2dc3",
+    "recordedAt": "2026-11-07T12:55:33.292Z"
+  }
+}
