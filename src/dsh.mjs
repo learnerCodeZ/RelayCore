@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'node:path';
 import { openAcpLifecycle } from './acp.mjs';
 import { runCodexReview } from './review.mjs';
 import { dshAccountEnvironment, selectAccountModel } from './dsh-account.mjs';
+import { attachSessionToDshWorkspace } from './dsh-workspace.mjs';
 
 export function dshCliPath(executable) {
   return join(dirname(resolve(executable)), 'resources', 'app.asar', 'dsh', 'node_modules',
@@ -135,6 +136,15 @@ export async function runDshReviewTask({ core, task, context, executable, apiKey
   const guidance = typeof core.consumeGuidance === 'function' ? await core.consumeGuidance(task.id) : undefined;
   const proposal = await propose({ task, files, home, executable, apiKey, accountHome, accountWorkspace, context,
     ...(guidance ? { guidance } : {}) });
+  // Register the dispatched session in the DSH workspace registry so Desktop
+  // and Web list it under its workspace in the sidebar. Best-effort: the
+  // archive exists by now, so the registry's archive-presence filter passes;
+  // a running DSH may drop the entry on its next registry write, and the
+  // next dispatch re-attaches idempotently.
+  if (accountHome !== undefined && accountWorkspace !== undefined) {
+    const registry = attachSessionToDshWorkspace({ dshHome: accountHome, workspacePath: accountWorkspace, sessionId: proposal.sessionId });
+    if (!registry.attached) console.warn(`[relaycore] DSH workspace registry attach skipped: ${registry.reason}`);
+  }
   if (proposal.usage && typeof context.recordUsage === 'function') {
     try { context.recordUsage('dsh', proposal.usage, proposal.model); }
     catch { /* a malformed usage event must not fail an otherwise valid proposal */ }
