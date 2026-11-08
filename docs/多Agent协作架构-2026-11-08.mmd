@@ -1,0 +1,16 @@
+flowchart TB
+    User["用户"] --> Main["主 Agent：Codex / ZCode / 其他已验收客户端"]
+    Main -->|"MCP：创建任务、查询状态、获取结果"| Bridge["RelayCore 本地服务"]
+    User -->|"配置、授权、查看、整合、回滚"| UI["RelayCore Windows 窗口"]
+    UI --> Bridge
+    Bridge --> Tasks["任务、预算、事件与会话记录"]
+    Bridge --> Adapter["执行接入：ACP 优先；必要时官方 CLI / SDK"]
+    Adapter --> Worker["执行 Agent：DSH / Qoder / OpenCode / 后续 TRAE CLI"]
+    Worker -->|"结构化提案或隔离候选"| Candidate["候选结果与验证证据"]
+    Candidate --> Review["审查角色：主 Agent 或独立审查 Agent"]
+    Review -->|"绑定当前快照的审查结论"| Bridge
+    Bridge -->|"状态与候选结果；不保证主动唤醒上游"| Main
+    Bridge --> Gate{"用户确认整合？"}
+    Gate -->|"是"| Source["源项目；保留整合前备份"]
+    Gate -->|"否"| Keep["保留候选，不改源项目"]
+    Source --> Rollback["需要时按校验规则回滚"]
