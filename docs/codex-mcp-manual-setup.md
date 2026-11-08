@@ -1,11 +1,11 @@
 # Codex Desktop 连接 RelayCore MCP
 
-目标仅是验证 **Codex Desktop → RelayCore MCP → Daemon** 的 `list_tasks` 查询，不启动 DSH，不调用 Codex SDK 或模型。当前 `dispatch_task` 仍拒绝执行。
+更新：2026-11-08。本文说明如何把 RelayCore 的 MCP 服务登记进 Codex Desktop，以及口令机制。当前已开放任务全生命周期工具：创建、查询、**派发、暂停、恢复、引导、停止**，真实派发链路（MCP → Daemon → DSH 账户执行 → Codex 独立审查 → 整合/回滚）已多次真实验收。
 
 ## 先分清接口
 
 - `src/mcp.mjs` 是 **RelayCore 提供给 Codex Desktop 的 MCP stdio 服务**，不是 DSH 插件。
-- `src/acp.mjs` 是 RelayCore 将来连接 DSH 的 ACP 客户端；目前只在独立诊断探针中使用，没有接入生产 Daemon。
+- `src/acp.mjs` 是 RelayCore 连接 DSH 的 ACP 客户端，已在账户执行链路中使用。
 - 安装 `@openai/codex-sdk` 也不会自动注册 MCP 服务或启动 Daemon。
 
 ## Windows 默认连接步骤
@@ -29,7 +29,8 @@
    command = 'D:\Node_js\node.exe'
    args = ['D:\MYCODE\RelayCore\src\mcp.mjs']
    cwd = 'D:\MYCODE\RelayCore'
-   enabled_tools = ['create_task', 'list_tasks', 'task_status', 'task_events', 'stop_task']
+   enabled_tools = ['create_task', 'list_tasks', 'task_status', 'task_events', 'stop_task',
+     'dispatch_task', 'pause_task', 'resume_task', 'guide_task']
    ```
 
    配置中不需要 `env` 或旧的 `env_vars = ['RELAYCORE_TOKEN']`。这五个工具只涉及草稿及其生命周期，`dispatch_task` 未开放。在 PowerShell 运行 `codex mcp list` 可核对登记。插件页面未出现同名插件不能说明 MCP 未加载；当前界面里的 MCP 导航入口尚未核实。
@@ -51,6 +52,6 @@ DPAPI 行为依据 [Microsoft ProtectedData 文档](https://learn.microsoft.com/
 
 ## 本机当前状态
 
-截至 2026-10-25：Windows 加密凭据、独立 MCP 生命周期和 Desktop 草稿生命周期均已通过。开发过程中新增的五个工具随后已加载，无需再次要求用户重启；当前聊天实际调用 `create_task` 创建任务，再用 `task_status`、`task_events` 核对 `DRAFT`/`task.created`，调用 `stop_task` 后由事件及列表确认 `CANCELED`/`task.canceled`。未调用模型或派发任务。DSH 执行及真实 SDK Review 仍未通过。10 月 20 日注册项消失的原因未知；此前导致配置刷新错误的项目级 `.codex/config.toml` 已撤回。
+截至 2026-11-08：九个任务生命周期工具已全部开放并经真实链路验收（多次真实派发、暂停/恢复/重放、整合/回滚、引导、取消）。账户执行经 `config.json`（控制台"保存连接配置"）或环境变量启用；独立审查走 Codex SDK；调度产生的 DSH 会话已自动登记进 DSH 工作区注册表，可在 DSH Desktop/Web 侧栏按任务标题查看。10 月 20 日注册项消失的原因未知；此前导致配置刷新错误的项目级 `.codex/config.toml` 已撤回。
 
 官方参考：[Codex MCP 设置说明](https://learn.chatgpt.com/docs/extend/mcp)。
