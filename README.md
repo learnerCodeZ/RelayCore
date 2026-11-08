@@ -2,7 +2,7 @@
 
 RelayCore 计划作为 Windows 本地优先的双 Agent 协作工具：Codex 负责规划和验收，DeepSeek Harness（DSH）负责执行，独立的 Bridge 负责持久化任务、调度与安全控制。Codex 通过 MCP 接入 Bridge；本地网页计划用于监控和审批。
 
-[English](README.en.md) · [Codex MCP 接入](docs/codex-mcp-manual-setup.md) · [DSH 任务接入](docs/dsh-integration.md) · [项目审视与改进报告](docs/项目审视与改进报告-2026-10-28.md) · [安全说明](SECURITY.md) · [贡献指南](CONTRIBUTING.md)
+[English](README.en.md) · [使用手册](docs/使用手册.md) · [Codex MCP 接入](docs/codex-mcp-manual-setup.md) · [DSH 任务接入](docs/dsh-integration.md) · [项目审视与改进报告](docs/项目审视与改进报告-2026-10-28.md) · [安全说明](SECURITY.md) · [贡献指南](CONTRIBUTING.md)
 
 **当前状态（2026-11-08）：主链路已多次真实验收，仍在验收阶段，适合隔离试用。** 真实双模型链路（MCP → DSH 账户执行 → Codex 独立审查 → 整合/回滚）多次成功；在途暂停→恢复→重放→整合→回滚已于 11 月 4 日同链路验收；调度产生的 DSH 会话自动登记进 DSH 工作区注册表，侧栏按任务标题可见。有时限全量无模型回归 **156/156、0 skip**。生产执行默认关闭，经控制台"保存连接配置"或环境变量显式启用。完整 OS 隔离、金额硬封顶和长期稳定性尚未验证。
 
