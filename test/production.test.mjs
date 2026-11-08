@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile, spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -249,29 +249,44 @@ test('the DSH session archive of a dispatched task renders as a readable convers
     const candidate = join(state.root, '.RelayCore', 'workspaces', task.id, 'message.txt');
     await writeFile(candidate, 'ready\n');
     const artifact = await core.prepareReviewWorkspace(task.id);
-    // Record a real DSH session and a compressed archive in the shared home layout.
-    const dshSessionId = 'acc-test-session-0001';
-    core.recordSession('dsh', dshSessionId);
-    const encodedWorkspace = '--' + state.root.replaceAll(/[\/:]+/g, '-').replace(/^-/, '') + '--';
-    const sessionDir = join(state.root, '.RelayCore', 'bridge', 'fake-dsh-home', 'sessions', encodedWorkspace, dshSessionId);
+    // Register the fake DSH session the way a real executor would have.
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(join(state.root, '.RelayCore', 'bridge', 'state.sqlite'));
+    db.prepare('INSERT INTO sessions(task_id,agent,session_id) VALUES(?,?,?)').run(task.id, 'dsh', 'acc-test-session-0001');
+    db.close();
+    const encodedWorkspace = '--' + state.root.replaceAll(/[\\/:]+/g, '-').replace(/^-/, '') + '--';
+    const sessionDir = join(state.root, '.RelayCore', 'bridge', 'fake-dsh-home', 'sessions', encodedWorkspace, 'acc-test-session-0001');
     await mkdir(sessionDir, { recursive: true });
-    const fzstd = (await import('fzstd')).default;
     const sessionLines = [
-      JSON.stringify({ type: 'session', version: 4, id: dshSessionId }),
+      JSON.stringify({ type: 'session', version: 4, id: 'acc-test-session-0001' }),
       JSON.stringify({ type: 'model/selection', data: { provider: 'deepseek-account', model: 'deepseek-flash' } }),
       JSON.stringify({ type: 'user/message', data: { content: [{ type: 'text', text: 'Change message.txt to ready.' }] } }),
       JSON.stringify({ type: 'assistant/message', data: { message: { role: 'assistant', content: [{ type: 'text', text: '{"summary":"done","files":[{"path":"message.txt","contents":"ready\n"}]}' }] } } })
     ].join('\n');
-    await writeFile(join(sessionDir, 'session.v4.jsonl.zstd'), fzstd.encode(Buffer.from(sessionLines)));
-    await writeFile(join(state.root, '.RelayCore', 'bridge', 'fake-dsh-home.txt'), 'marks the fake home for the test');
-    // The view endpoint locates the archive through RELAYCORE_DSH_HOME.
+    await writeFile(join(sessionDir, 'session.v4.jsonl'), sessionLines);
+    // Point the in-process daemon at the fake home; the view reads DSH_HOME live.
+    const fakeDshHome = join(state.root, '.RelayCore', 'bridge', 'fake-dsh-home');
+    process.env.DSH_HOME = fakeDshHome;
+    try {
+      await viewAssertions(state, task);
+    } finally { delete process.env.DSH_HOME; }
+    async function viewAssertions(state, task) {
+      // The view endpoint requires a console session (login via Bearer).
+      const { getControlToken } = await import('../src/auth.mjs');
+    const bearer = await getControlToken(state.root, { create: false });
+    const session = await fetch(`http://127.0.0.1:${state.core.server.address().port}/ui/session`,
+      { method: 'POST', headers: { authorization: `Bearer ${bearer}` } });
+    const { sessionToken } = await session.json();
+    const login = await fetch(`http://127.0.0.1:${state.core.server.address().port}/ui/login`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: sessionToken }) });
+    const cookie = /relaycore_ui=([^;]+)/.exec(login.headers.get('set-cookie'))[1];
     const view = await fetch(`http://127.0.0.1:${state.core.server.address().port}/ui/session-view/${task.id}`,
-      { headers: { cookie: state.cookie } });
-    assert.equal(view.status, 200);
+      { headers: { cookie: `relaycore_ui=${cookie}` } });
     const html = await view.text();
     assert.match(html, /DSH 会话记录/);
     assert.match(html, /Change message\.txt to ready\./);
-    assert.match(html, /"summary":"done"/);
+    assert.match(html, /&quot;summary&quot;:&quot;done&quot;/);
     assert.match(html, /deepseek-flash/);
+    }
   });
 });

@@ -162,16 +162,20 @@ test('an E1 task authorizes with the cost consent alone', async () => {
   });
 });
 
-test.skip('the session-view action renders the DSH conversation of a dispatched task (fixture issue: consoleAuthorized rejects the freshly issued cookie in this suite while the same flow passes in a standalone reproduction -- needs fixture rework, endpoint itself verified manually)', async () => {
+test('the session-view action renders the DSH conversation of a dispatched task', async () => {
   await withConsole(async (state) => {
     const cookie = await loggedInCookie(state);
     const task = await state.daemon.core.create({ ...contract, objective: 'Change pending to ready.' });
-    // Minimal fake executor that records a real DSH session, then completes.
-    // recordSession lives on the executor context, not the public API;
-    // the archive itself is what the view reads, so seeding it directly is enough.
+    // recordSession lives on the executor context, not the public API; seed the
+    // session row directly the way a real executor would have recorded it.
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(join(state.root, '.RelayCore', 'bridge', 'state.sqlite'));
+    db.prepare('INSERT INTO sessions(task_id,agent,session_id) VALUES(?,?,?)').run(task.id, 'dsh', 'acc-view-session-0001');
+    db.close();
     const view = await fetch(`http://127.0.0.1:${state.port}/ui/action`, {
-      method: 'POST', headers: { 'content-type': 'application/json', cookie,
-        origin: `http://127.0.0.1:${state.port}`, 'sec-fetch-site': 'same-origin' },
+      method: 'POST', headers: { 'content-type': 'application/json',
+        cookie: `relaycore_ui=${cookie}`, origin: `http://127.0.0.1:${state.port}`,
+        'sec-fetch-site': 'same-origin' },
       body: JSON.stringify({ id: task.id, action: 'session-view' }) });
     if (view.status !== 404) {
       const detail = await view.text();
@@ -195,8 +199,9 @@ test.skip('the session-view action renders the DSH conversation of a dispatched 
     process.env.DSH_HOME = join(state.root, 'fake-dsh-home');
     try {
       const page = await fetch(`http://127.0.0.1:${state.port}/ui/action`, {
-        method: 'POST', headers: { 'content-type': 'application/json', cookie,
-          origin: `http://127.0.0.1:${state.port}`, 'sec-fetch-site': 'same-origin' },
+        method: 'POST', headers: { 'content-type': 'application/json',
+          cookie: `relaycore_ui=${cookie}`, origin: `http://127.0.0.1:${state.port}`,
+          'sec-fetch-site': 'same-origin' },
         body: JSON.stringify({ id: task.id, action: 'session-view' }) });
       assert.equal(page.status, 200);
       const html = await page.text();

@@ -1,8 +1,10 @@
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { access, mkdir, open, lstat, readFile, unlink, writeFile } from 'node:fs/promises';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
+import { decompress } from 'fzstd';
 import { openCore } from './core.mjs';
 import { getControlToken } from './auth.mjs';
 import { runDshReviewTask } from './dsh.mjs';
@@ -63,24 +65,27 @@ const escapeHtml = (text) => text.replace(/[&<>"']/g, (character) =>
 // conversation. The records live in the shared DSH home, which the Desktop
 // and Web UIs do not list for acp sessions -- this is the observability view.
 const dshHome = () => process.env.DSH_HOME?.trim() || join(process.env.USERPROFILE ?? '', '.dsh');
-function replySessionView(response, taskId, sessionId, accountWorkspace) {
+function replySessionView(reply, response, taskId, sessionId, accountWorkspace) {
   const sessionsRoot = join(dshHome(), 'sessions');
   let archivePath = null;
   let workspaceDir = null;
   try {
-    for (const workspace of require('node:fs').readdirSync(sessionsRoot)) {
+    for (const workspace of readdirSync(sessionsRoot)) {
       for (const candidate of [join(sessionsRoot, workspace, sessionId, 'session.v4.jsonl.zstd'), join(sessionsRoot, workspace, sessionId, 'session.v4.jsonl')]) {
-        if (require('node:fs').existsSync(candidate)) { archivePath = candidate; workspaceDir = workspace; break; }
+        if (existsSync(candidate)) { archivePath = candidate; workspaceDir = workspace; break; }
       }
     }
   } catch { }
-  if (!archivePath) return reply(404, { error: `No DSH session archive found for ${sessionId}` });
+  if (!archivePath) {
+    response.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    response.end(JSON.stringify({ error: `No DSH session archive found for ${sessionId}` }));
+    return null;
+  }
   let raw;
   if (archivePath.endsWith('.zstd')) {
-    const { decompressSync } = require('fzstd');
-    raw = decompressSync(require('node:fs').readFileSync(archivePath));
+    raw = decompress(readFileSync(archivePath));
   } else {
-    raw = require('node:fs').readFileSync(archivePath);
+    raw = readFileSync(archivePath);
   }
   const entries = raw.toString('utf8').split('\n').filter(Boolean).map((line) => {
     try { return JSON.parse(line); } catch { return { type: 'unparseable' }; }
@@ -89,7 +94,11 @@ function replySessionView(response, taskId, sessionId, accountWorkspace) {
   for (const entry of entries) {
     if (entry.type === 'user/message' || entry.type === 'assistant/message') {
       const role = entry.type === 'user/message' ? 'user' : 'assistant';
-      for (const part of entry.message?.content ?? []) {
+      // Real archives put content at data.content for user messages and
+      // data.message.content for assistant messages (verified against a
+      // production DSH archive, 2026-11 session dumps).
+      const parts = role === 'user' ? entry.data?.content ?? [] : entry.data?.message?.content ?? [];
+      for (const part of parts) {
         if (part.type === 'text' && part.text?.trim()) {
           turns.push({ role, text: part.text.length > 4000 ? part.text.slice(0, 4000) + '…(截断)' : part.text });
         } else if (part.type === 'reasoning' && part.text?.trim()) {
@@ -417,7 +426,15 @@ document.getElementById('f').addEventListener('submit', async (event) => {
       }
       // Browser actions must match the validated local origin, fetch metadata,
       // and hold a valid console session.
-      if (request.method === 'POST' && url.pathname === '/ui/action') {
+      if (request.method === 'GET' && url.pathname.startsWith('/ui/session-view/')) {
+      if (!consoleAuthorized) return reply(401, { error: 'Console session required; log in at /ui' });
+      const taskId = decodeURIComponent(url.pathname.slice('/ui/session-view/'.length));
+      if (!/^TASK-[0-9a-f-]{36}$/.test(taskId)) throw new Error('Invalid task ID');
+      const dshSession = core.get(taskId).sessions.find((session) => session.agent === 'dsh');
+      if (!dshSession) return reply(404, { error: 'This task has no recorded DSH session' });
+          return replySessionView(reply, response, taskId, dshSession.sessionId, dshAccountWorkspace);
+    }
+    if (request.method === 'POST' && url.pathname === '/ui/action') {
         if (!browserSafe) return reply(403, { error: 'Cross-origin console actions are refused' });
         if (!consoleAuthorized) return reply(401, { error: 'Console session required; log in at /ui' });
         const input = await readJsonBody(request);
@@ -427,8 +444,8 @@ document.getElementById('f').addEventListener('submit', async (event) => {
           // live in the shared DSH home, which the Desktop/Web UIs do not list
           // for acp sessions.
           const dshSession = core.get(id).sessions.find((session) => session.agent === 'dsh');
-          if (!dshSession) throw new Error('This task has no recorded DSH session');
-          return replySessionView(response, id, dshSession.sessionId, dshAccountWorkspace);
+          if (!dshSession) return reply(404, { error: 'This task has no recorded DSH session' });
+          return replySessionView(reply, response, id, dshSession.sessionId, dshAccountWorkspace);
         }
         if (action !== 'create' && (typeof id !== 'string' || !/^TASK-[0-9a-f-]{36}$/.test(id))) throw new Error('Invalid task ID');
         const dispatchAction = async () => {
