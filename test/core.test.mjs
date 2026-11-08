@@ -453,3 +453,19 @@ test('expired queued work is reconciled before an executor can run after restart
     assert.equal(core.events(task.id).some((entry) => entry.kind === 'execution.deadline_exceeded'), true);
   } finally { core?.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test('task contracts accept a bounded planner-written prompt', async () => {
+  const root = await temporaryRoot();
+  const core = await openCore(root);
+  try {
+    const task = await core.create({ ...contract, prompt: '自定义指令：只改端口行，注释保持原样。' });
+    assert.equal(core.get(task.id).contract.prompt, '自定义指令：只改端口行，注释保持原样。');
+    assert.match(await readFile(join(root, '.RelayCore', '.agent-tasks', task.id, 'TASK.md'), 'utf8'), /执行提示词/);
+    for (const bad of ['', '   ', 'x'.repeat(8001)]) {
+      await assert.rejects(core.create({ ...contract, prompt: bad }), /prompt must be nonempty text of at most 8000/);
+    }
+    // Without the field nothing changes for existing callers.
+    const plain = await core.create(contract);
+    assert.equal(core.get(plain.id).contract.prompt, undefined);
+  } finally { core.close(); await rm(root, { recursive: true, force: true }); }
+});

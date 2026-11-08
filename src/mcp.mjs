@@ -4,6 +4,7 @@ import { call } from './client.mjs';
 const tools = [
   { name: 'create_task', description: 'Save a task draft. Does not run an Agent.', inputSchema: {
     type: 'object', properties: { title: { type: 'string' }, objective: { type: 'string' }, acceptance: { type: 'string' },
+      prompt: { type: 'string', maxLength: 8000, description: 'Optional free-form instruction the planner writes directly into the DSH executor prompt. RelayCore still appends the structured-output contract and the read-only safety framing; objective and acceptance stay in the machine-checked input JSON.' },
       allowedPaths: { type: 'array', items: { type: 'string' }, maxItems: 32 },
       riskLevel: { type: 'string', enum: ['E0', 'E1', 'E2'], description: 'Execution risk level. E2 requires separate L3 consent at authorization time (--e2-approved / console checkbox). Default E1.' },
       executionLimits: { type: 'object', properties: {

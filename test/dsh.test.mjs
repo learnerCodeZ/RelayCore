@@ -312,3 +312,38 @@ test('runDshReviewTask honors the registryAttach opt-out', async () => {
     assert.deepEqual(data.tables.workspaces.w1.sessionIds, ['session-flag-0001']);
   } finally { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
+
+test('a planner-written contract prompt reaches DSH ahead of the fixed contract block', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relaycore-prompt-test-'));
+  const home = join(root, 'job');
+  try {
+    await mkdir(home);
+    await mkdir(join(root, 'account-home'));
+    let captured = '';
+    const catalog = (value = 'opaque-account-choice') => [{ id: 'model', category: 'model', type: 'select', currentValue: value,
+      options: [{ group: 'deepseek-official', name: 'DeepSeek Account', options: [{ name: 'API model', value: 'api-choice' }] },
+        { group: 'deepseek-account', name: 'Account', options: [{ name: 'Account Flash', value: 'opaque-account-choice' }] }] }];
+    const connect = (command, args, options) => ({
+      async initialize() { return { protocolVersion: 1 }; },
+      async newSession() { return { sessionId: 'prompt-session', configOptions: catalog('api-choice') }; },
+      async setConfigOption(sessionId, configId, value) { return { configOptions: catalog(value) }; },
+      async prompt(sessionId, prompt) {
+        captured = prompt;
+        options.onUpdate({ sessionId, update: { sessionUpdate: 'agent_message_chunk', content: {
+          type: 'text', text: JSON.stringify({ summary: 'done', files: [{ path: 'message.txt', contents: 'ready\n' }] }) } } });
+        return { stopReason: 'end_turn' };
+      },
+      async closeSession() {},
+      async close() {},
+      async cancelSession() {}
+    });
+    await runDshProposal({ task: { contract: { title: '端口任务', prompt: '只改端口那一行，其他保持原样。',
+      objective: 'change port', acceptance: 'port is 8080' } }, files: [{ path: 'message.txt', contents: 'pending\n' }],
+      home, executable: process.execPath, accountHome: join(root, 'account-home'),
+      accountWorkspace: root, context: { signal: new AbortController().signal, beginModelTurn() {}, recordSession() {} } }, connect);
+    assert.ok(captured.startsWith('【端口任务】\n\n'));
+    assert.ok(captured.includes('只改端口那一行，其他保持原样。'));
+    assert.ok(captured.includes('Propose edits using only the supplied JSON data'));
+    assert.ok(captured.indexOf('只改端口那一行') < captured.indexOf('Propose edits using only'));
+  } finally { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+});

@@ -82,6 +82,10 @@ function taskContract(input, revision) {
   if (riskLevel !== undefined && (typeof riskLevel !== 'string' || !riskLevels.has(riskLevel))) {
     throw new Error("riskLevel must be one of 'E0', 'E1' or 'E2'");
   }
+  const prompt = input?.prompt;
+  if (prompt !== undefined && (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 8000)) {
+    throw new Error('prompt must be nonempty text of at most 8000 characters');
+  }
   return {
     title: requiredText(input?.title, 'title'),
     objective: requiredText(input?.objective, 'objective'),
@@ -89,6 +93,7 @@ function taskContract(input, revision) {
     allowedPaths: declaredPaths(input?.allowedPaths),
     executionLimits: declaredLimits(input?.executionLimits),
     ...(riskLevel !== undefined ? { riskLevel } : {}),
+    ...(prompt !== undefined ? { prompt: prompt.trim() } : {}),
     revision
   };
 }
@@ -274,7 +279,7 @@ export async function openCore(root, executor = null, executionPolicy) {
     await mkdir(directory);
     try {
       const origin = revisionInfo ? `\n\n## 修订来源\n父任务：${revisionInfo.parentTaskId}\n版本链：${revisionInfo.rootTaskId}\n原因：${revisionInfo.reason}` : '';
-      await writeFile(join(directory, 'TASK.md'), `# ${id}: ${contract.title}\n\n## 目标\n${contract.objective}\n\n## 验收标准\n${contract.acceptance}\n\n## 允许路径（仅声明，未授权执行）\n${contract.allowedPaths.length ? contract.allowedPaths.map((path) => `- \`${path}\``).join('\n') : '无'}\n\n## 执行上限（草稿声明，执行须单独授权）\n${contract.executionLimits ? `最长时长：${contract.executionLimits.maxDurationSeconds} 秒；最多模型回合：${contract.executionLimits.maxModelTurns}。` : '未声明'}${origin}\n\n修订：${contract.revision}。当前仅保存草稿；尚未授权外部 Agent 执行。\n`, { flag: 'wx' });
+      await writeFile(join(directory, 'TASK.md'), `# ${id}: ${contract.title}\n\n## 目标\n${contract.objective}\n\n## 验收标准\n${contract.acceptance}\n\n## 允许路径（仅声明，未授权执行）\n${contract.allowedPaths.length ? contract.allowedPaths.map((path) => `- \`${path}\``).join('\n') : '无'}\n\n## 执行上限（草稿声明，执行须单独授权）\n${contract.executionLimits ? `最长时长：${contract.executionLimits.maxDurationSeconds} 秒；最多模型回合：${contract.executionLimits.maxModelTurns}。` : '未声明'}${origin}\n\n修订：${contract.revision}。当前仅保存草稿；尚未授权外部 Agent 执行。\n${contract.prompt ? `\n## 执行提示词（规划方自写，只读转发给 DSH）\n${contract.prompt}\n` : ''}`, { flag: 'wx' });
       transaction(database, () => {
         if (revisionInfo) requireRevisionParent(revisionInfo.parentTaskId, contract.revision - 1, revisionInfo.parentContractSha256);
         database.prepare('INSERT INTO tasks(id,state,contract,created_at,updated_at) VALUES(?,?,?,?,?)')
@@ -297,7 +302,7 @@ export async function openCore(root, executor = null, executionPolicy) {
   const create = async (input) => persistDraft(taskContract(input, 1));
   const createRevision = async (id, input) => {
     if (!input || typeof input !== 'object' || Array.isArray(input) ||
-      Object.keys(input).some((key) => !['expectedRevision', 'reason', 'title', 'objective', 'acceptance', 'allowedPaths', 'executionLimits', 'riskLevel'].includes(key)) ||
+      Object.keys(input).some((key) => !['expectedRevision', 'reason', 'title', 'objective', 'acceptance', 'allowedPaths', 'executionLimits', 'riskLevel', 'prompt'].includes(key)) ||
       !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1 || input.expectedRevision >= Number.MAX_SAFE_INTEGER) throw new Error('Invalid task revision request');
     const { expectedRevision, reason, ...changes } = input;
     const revisionReason = requiredText(reason, 'reason');
