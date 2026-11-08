@@ -18,6 +18,7 @@
     "diagnose:crash": "node scripts/diagnose-crash-recovery.mjs"
   },
   "dependencies": {
-    "@openai/codex-sdk": "0.162.1"
+    "@openai/codex-sdk": "0.162.1",
+    "fzstd": "^0.1.1"
   }
 }

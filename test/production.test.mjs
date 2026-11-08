@@ -240,3 +240,38 @@ async function readToken(root) {
   const { getControlToken } = await import('../src/auth.mjs');
   return getControlToken(root, { create: false });
 }
+
+test('the DSH session archive of a dispatched task renders as a readable conversation', async () => {
+  await withProductionDaemon(async (state) => {
+    const core = state.core.core;
+    const task = await core.create({ ...contract, objective: 'Change pending to ready.' });
+    await core.prepareWorkspace(task.id);
+    const candidate = join(state.root, '.RelayCore', 'workspaces', task.id, 'message.txt');
+    await writeFile(candidate, 'ready\n');
+    const artifact = await core.prepareReviewWorkspace(task.id);
+    // Record a real DSH session and a compressed archive in the shared home layout.
+    const dshSessionId = 'acc-test-session-0001';
+    core.recordSession('dsh', dshSessionId);
+    const encodedWorkspace = '--' + state.root.replaceAll(/[\/:]+/g, '-').replace(/^-/, '') + '--';
+    const sessionDir = join(state.root, '.RelayCore', 'bridge', 'fake-dsh-home', 'sessions', encodedWorkspace, dshSessionId);
+    await mkdir(sessionDir, { recursive: true });
+    const fzstd = (await import('fzstd')).default;
+    const sessionLines = [
+      JSON.stringify({ type: 'session', version: 4, id: dshSessionId }),
+      JSON.stringify({ type: 'model/selection', data: { provider: 'deepseek-account', model: 'deepseek-flash' } }),
+      JSON.stringify({ type: 'user/message', data: { content: [{ type: 'text', text: 'Change message.txt to ready.' }] } }),
+      JSON.stringify({ type: 'assistant/message', data: { message: { role: 'assistant', content: [{ type: 'text', text: '{"summary":"done","files":[{"path":"message.txt","contents":"ready\n"}]}' }] } } })
+    ].join('\n');
+    await writeFile(join(sessionDir, 'session.v4.jsonl.zstd'), fzstd.encode(Buffer.from(sessionLines)));
+    await writeFile(join(state.root, '.RelayCore', 'bridge', 'fake-dsh-home.txt'), 'marks the fake home for the test');
+    // The view endpoint locates the archive through RELAYCORE_DSH_HOME.
+    const view = await fetch(`http://127.0.0.1:${state.core.server.address().port}/ui/session-view/${task.id}`,
+      { headers: { cookie: state.cookie } });
+    assert.equal(view.status, 200);
+    const html = await view.text();
+    assert.match(html, /DSH 会话记录/);
+    assert.match(html, /Change message\.txt to ready\./);
+    assert.match(html, /"summary":"done"/);
+    assert.match(html, /deepseek-flash/);
+  });
+});

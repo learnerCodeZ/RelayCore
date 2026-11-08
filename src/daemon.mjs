@@ -59,6 +59,57 @@ export function productionExecution(root, config = {}) {
 const escapeHtml = (text) => text.replace(/[&<>"']/g, (character) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 
+// Renders the compressed DSH session archive of one task as a readable
+// conversation. The records live in the shared DSH home, which the Desktop
+// and Web UIs do not list for acp sessions -- this is the observability view.
+const dshHome = () => process.env.DSH_HOME?.trim() || join(process.env.USERPROFILE ?? '', '.dsh');
+function replySessionView(response, taskId, sessionId, accountWorkspace) {
+  const sessionsRoot = join(dshHome(), 'sessions');
+  let archivePath = null;
+  let workspaceDir = null;
+  try {
+    for (const workspace of require('node:fs').readdirSync(sessionsRoot)) {
+      for (const candidate of [join(sessionsRoot, workspace, sessionId, 'session.v4.jsonl.zstd'), join(sessionsRoot, workspace, sessionId, 'session.v4.jsonl')]) {
+        if (require('node:fs').existsSync(candidate)) { archivePath = candidate; workspaceDir = workspace; break; }
+      }
+    }
+  } catch { }
+  if (!archivePath) return reply(404, { error: `No DSH session archive found for ${sessionId}` });
+  let raw;
+  if (archivePath.endsWith('.zstd')) {
+    const { decompressSync } = require('fzstd');
+    raw = decompressSync(require('node:fs').readFileSync(archivePath));
+  } else {
+    raw = require('node:fs').readFileSync(archivePath);
+  }
+  const entries = raw.toString('utf8').split('\n').filter(Boolean).map((line) => {
+    try { return JSON.parse(line); } catch { return { type: 'unparseable' }; }
+  });
+  const turns = [];
+  for (const entry of entries) {
+    if (entry.type === 'user/message' || entry.type === 'assistant/message') {
+      const role = entry.type === 'user/message' ? 'user' : 'assistant';
+      for (const part of entry.message?.content ?? []) {
+        if (part.type === 'text' && part.text?.trim()) {
+          turns.push({ role, text: part.text.length > 4000 ? part.text.slice(0, 4000) + '…(截断)' : part.text });
+        } else if (part.type === 'reasoning' && part.text?.trim()) {
+          turns.push({ role: 'reasoning', text: part.text.length > 2000 ? part.text.slice(0, 2000) + '…(截断)' : part.text });
+        }
+      }
+    }
+    if (['task.paused', 'task.resumed', 'sandbox/mode', 'model/selection'].includes(entry.type)) {
+      turns.push({ role: 'event', text: entry.type + (entry.data ? ' ' + JSON.stringify(entry.data).slice(0, 200) : '') });
+    }
+  }
+  const html = `<!doctype html><html lang="zh"><meta charset="utf-8"><title>DSH 会话记录 ${escapeHtml(sessionId.slice(0, 8))}…</title>` +
+    `<style>body{font-family:system-ui;margin:2rem;max-width:960px}div.entry{border:1px solid #ddd;border-radius:8px;padding:.8rem 1rem;margin:.6rem 0;white-space:pre-wrap;word-break:break-word;font-size:.9rem}` +
+    `div.user{background:#e8f0fe}div.assistant{background:#e6f4ea}div.reasoning{background:#fef7e0;color:#666}div.event{background:#f1f1f1;color:#666;font-size:.8rem}</style>` +
+    `<h1>DSH 会话记录</h1><p>任务 ${escapeHtml(taskId)} · 会话 ${escapeHtml(sessionId)} · 工作区 ${escapeHtml(accountWorkspace ?? workspaceDir ?? '')} · ${turns.length} 条</p>` +
+    turns.map((turn) => `<div class="entry ${turn.role}"><b>${turn.role}</b><br>${escapeHtml(turn.text)}</div>`).join('');
+  response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+  response.end(html);
+}
+
 async function readJsonBody(request) {
   const chunks = [];
   let bytes = 0;
@@ -73,7 +124,7 @@ async function readJsonBody(request) {
   return bytes ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
 }
 
-export async function startDaemon(root = process.cwd(), { executor = null, executionPolicy, port: listenPort = port } = {}) {
+export async function startDaemon(root = process.cwd(), { executor = null, executionPolicy, dshAccountWorkspace = process.env.RELAYCORE_ACCOUNT_WORKSPACE?.trim(), port: listenPort = port } = {}) {
   if (!Number.isInteger(listenPort) || listenPort < 0 || listenPort > 65535) throw new Error('Invalid daemon port');
   if ((executor !== null && typeof executor !== 'function') || (executor && executionPolicy === undefined) || (!executor && executionPolicy !== undefined)) throw new Error('An injected executor requires an explicit execution policy');
   const projectRoot = resolve(root);
@@ -371,6 +422,14 @@ document.getElementById('f').addEventListener('submit', async (event) => {
         if (!consoleAuthorized) return reply(401, { error: 'Console session required; log in at /ui' });
         const input = await readJsonBody(request);
         const { id, action } = input ?? {};
+        if (action === 'session-view') {
+          // Render the DSH session record as a readable conversation. Records
+          // live in the shared DSH home, which the Desktop/Web UIs do not list
+          // for acp sessions.
+          const dshSession = core.get(id).sessions.find((session) => session.agent === 'dsh');
+          if (!dshSession) throw new Error('This task has no recorded DSH session');
+          return replySessionView(response, id, dshSession.sessionId, dshAccountWorkspace);
+        }
         if (action !== 'create' && (typeof id !== 'string' || !/^TASK-[0-9a-f-]{36}$/.test(id))) throw new Error('Invalid task ID');
         const dispatchAction = async () => {
           switch (action) {
@@ -510,7 +569,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const configPath = join(root, '.RelayCore', 'bridge', 'config.json');
   const config = await readFile(configPath, 'utf8').then((text) => JSON.parse(text), () => ({}));
   const production = productionExecution(root, config);
-  const daemon = await startDaemon(root, { executor: production.executor, executionPolicy: production.executionPolicy });
+  const daemon = await startDaemon(root, { executor: production.executor, executionPolicy: production.executionPolicy, dshAccountWorkspace: production.workspace });
   const actualPort = daemon.server.address().port;
   process.stderr.write(`RelayCore control server on 127.0.0.1:${actualPort}; ${production.note}\n`);
   // One-click sign-in: the printed pairing link is single-use and expires in
