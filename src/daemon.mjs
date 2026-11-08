@@ -81,13 +81,15 @@ function replySessionView(reply, response, taskId, sessionId, accountWorkspace) 
     response.end(JSON.stringify({ error: `No DSH session archive found for ${sessionId}` }));
     return null;
   }
-  let raw;
+  let text;
   if (archivePath.endsWith('.zstd')) {
-    raw = decompress(readFileSync(archivePath));
+    // decompress returns a Uint8Array; its toString() is NOT utf8 decoding,
+    // so wrap in Buffer before decoding (real archives are zstd-compressed).
+    text = Buffer.from(decompress(readFileSync(archivePath))).toString('utf8');
   } else {
-    raw = readFileSync(archivePath);
+    text = readFileSync(archivePath, 'utf8');
   }
-  const entries = raw.toString('utf8').split('\n').filter(Boolean).map((line) => {
+  const entries = text.split('\n').filter(Boolean).map((line) => {
     try { return JSON.parse(line); } catch { return { type: 'unparseable' }; }
   });
   const turns = [];

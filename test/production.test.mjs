@@ -263,7 +263,8 @@ test('the DSH session archive of a dispatched task renders as a readable convers
       JSON.stringify({ type: 'user/message', data: { content: [{ type: 'text', text: 'Change message.txt to ready.' }] } }),
       JSON.stringify({ type: 'assistant/message', data: { message: { role: 'assistant', content: [{ type: 'text', text: '{"summary":"done","files":[{"path":"message.txt","contents":"ready\n"}]}' }] } } })
     ].join('\n');
-    await writeFile(join(sessionDir, 'session.v4.jsonl'), sessionLines);
+    await writeFile(join(sessionDir, 'session.v4.jsonl.zstd'),
+      (await import('node:zlib')).zstdCompressSync(Buffer.from(sessionLines, 'utf8')));
     // Point the in-process daemon at the fake home; the view reads DSH_HOME live.
     const fakeDshHome = join(state.root, '.RelayCore', 'bridge', 'fake-dsh-home');
     process.env.DSH_HOME = fakeDshHome;
