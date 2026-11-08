@@ -28,3 +28,10 @@
 ## 5. 与既有安全边界的关系
 
 插件代码运行在 DSH 进程内（用户级权限），安装本身等效于"在机器上运行新代码"——需要用户逐个确认安装（官方管理页已内置确认流）。RelayCore 插件只**读取** RelayCore 的 API 做展示，不放大任何权限；DSH 执行侧的受控提案/候选副本/独立审查边界不受影响。
+
+## 6. 追加发现（2026-11-08 深入解剖）
+
+- **版本变化**：DSH 于 11-04 自动更新（182MB→213MB），包结构由 `dsh/node_modules` 平铺保持不变（新增 forge/action-cards 等）；`dshCliPath`、console shim、ACP 链路在新版本下经真实验收确认兼容。
+- **第三方 bundle 已能被内核加载**：手写 bundle（含 `dsh.bundle.patch` 与 `dsh.client.platform: "web"` 声明）放入 profile 的 `node_modules` 并登记 `dsh.profile.bundles` 后，DSH 启动成功激活（首次失败报缺 `dsh.bundle` 声明——报错信息直接指明缺失字段，调试体验良好）。
+- **卡点（下一步分析点）**：浏览器端 `__ModuleLoader__` 的插件清单来自启动注入行（`index injection rows`：global/script/script-src/style/html 五种，由 Host 渲染进 index.html 或经 Desktop 壳注入）。官方 client-ui bundle 的 `client.js`（`window.__ModuleLoader__.load(...)`）经此链交付；第三方 bundle 的 client.js 进入该清单的确切聚合点尚未定位——候选位置：`dsh-web-app/lib/startup.js`、`dsh-cordis-client-runner`、host-frontend-static 的 index 渲染。已解压分析材料保留在 `Temp/dsh-research/`（web-main.js、webserver/web-app/inventory 源码）。
+- **无关发现**：acp 会话对 Desktop/Web GUI 不可见的根因方向——acp profile 的会话查询服务为 `:memory:` 不持久（无列表数据源），与 Desktop 列表分库。
