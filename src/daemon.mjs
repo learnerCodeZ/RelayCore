@@ -315,7 +315,10 @@ document.getElementById('f').addEventListener('submit', async (event) => {
         const rows = tasks.map((entry) => {
           let contract = {};
           let supersededBy;
-          try { ({ contract, supersededBy } = core.get(entry.id)); } catch { }
+          let sessions = [];
+          try { ({ contract, supersededBy, sessions } = core.get(entry.id)); } catch { }
+          const sessionLink = (sessions ?? []).some((session) => session.agent === 'dsh')
+            ? `<a href="/ui/session-view/${entry.id}">会话记录</a>` : '';
           const risk = contract.riskLevel ?? 'E1';
           const limits = contract.executionLimits ?? defaultLimits;
           const stateActions = entry.state === 'DRAFT' && supersededBy ? `已替换为 ${supersededBy}` : {
@@ -339,7 +342,7 @@ document.getElementById('f').addEventListener('submit', async (event) => {
           }[entry.state] ?? '';
           return `<tr><td>${entry.id}</td><td>${entry.state}</td><td>${risk}</td>` +
             `<td>${escapeHtml(contract.title ?? '')}</td><td>${escapeHtml(contract.objective ?? '')}</td>` +
-            `<td>${contract.executionLimits ? `${limits.maxDurationSeconds} 秒 / ${limits.maxModelTurns} 轮` : '未声明执行上限，请先保存'}<br>${stateActions}</td>` +
+            `<td>${contract.executionLimits ? `${limits.maxDurationSeconds} 秒 / ${limits.maxModelTurns} 轮` : '未声明执行上限，请先保存'}<br>${stateActions}${stateActions && sessionLink ? '<br>' : ''}${sessionLink}</td>` +
             `<td><input type="text" placeholder="追加引导" data-guide="${entry.id}" size="18">` +
             `<button data-action="guide" data-id="${entry.id}">引导</button></td></tr>`;
         }).join('');
