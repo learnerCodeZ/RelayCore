@@ -7,7 +7,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import { decompress } from 'fzstd';
 import { openCore } from './core.mjs';
 import { getControlToken } from './auth.mjs';
-import { runDshReviewTask } from './dsh.mjs';
+import { runDshReviewTask, ensureResumeCandidate } from './dsh.mjs';
 
 const port = Number(process.env.RELAYCORE_PORT ?? 8765);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid RELAYCORE_PORT');
@@ -15,12 +15,22 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invali
 // Production execution stays disabled unless the operator explicitly opts in
 // through the environment or the project config file: RELAYCORE_EXECUTION=account
 // wires the DSH account route behind the same authorization, budget and
-// recovery gates the diagnostics use. Anything else keeps external execution
-// disabled. Environment variables win over config.json.
+// recovery gates the diagnostics use. An explicit RELAYCORE_EXECUTION decides
+// the on/off question by itself: "account" enables (paths still required),
+// "off"/"disabled"/"false"/"0" force-disables regardless of config.json, any
+// other value refuses to start so a typo can never silently enable execution.
+// Only when the variable is unset does the config file decide.
 export function productionExecution(root, config = {}) {
-  const fromEnv = process.env.RELAYCORE_EXECUTION === 'account';
+  const envExecution = process.env.RELAYCORE_EXECUTION?.trim();
+  const envState = envExecution === undefined || envExecution === '' ? 'unset'
+    : envExecution.toLowerCase() === 'account' ? 'account'
+      : ['off', 'disabled', 'false', '0'].includes(envExecution.toLowerCase()) ? 'off' : 'invalid';
+  if (envState === 'invalid') throw new Error('RELAYCORE_EXECUTION accepts "account" or one of "off"/"disabled"/"false"/"0"');
   const fromConfig = config.execution === 'account' && config.dshExe && config.accountWorkspace;
-  if (!fromEnv && !fromConfig) return { executor: null, executionPolicy: undefined, note: 'external execution disabled' };
+  if (envState === 'off') {
+    return { executor: null, executionPolicy: undefined, note: `external execution disabled (RELAYCORE_EXECUTION=${envExecution})` };
+  }
+  if (envState === 'unset' && !fromConfig) return { executor: null, executionPolicy: undefined, note: 'external execution disabled' };
   const executable = process.env.RELAYCORE_DSH_EXE?.trim() || config.dshExe;
   if (!executable) throw new Error('Account execution requires RELAYCORE_DSH_EXE or config.dshExe');
   const workspace = process.env.RELAYCORE_ACCOUNT_WORKSPACE?.trim() || config.accountWorkspace;
@@ -46,16 +56,20 @@ export function productionExecution(root, config = {}) {
     const existing = inventory.registered.find((entry) => entry.taskId === task.id);
     if (existing) {
       if (!existing.present || existing.kind !== 'copy') throw new Error('Existing task workspace is unavailable or incompatible');
-      await core.verifyWorkspace(task.id);
+      // A task paused after its proposal was applied carries a changed
+      // candidate; the shared resume helper resets it to the source so the
+      // resume can proceed instead of failing before any model call.
+      await ensureResumeCandidate(core, task.id);
     } else {
       await core.prepareWorkspace(task.id);
     }
     if (!(await core.inspectSourceConflicts(task.id)).matchesBaseline) throw new Error('Source changed before execution');
     context.signal.throwIfAborted();
     return runDshReviewTask({ core, task, context, executable, accountHome, accountWorkspace: workspace,
-      authHome: reviewAuthHome });
+      authHome: reviewAuthHome, registryAttach: config.dshRegistryAttach !== false });
   };
-  return { executor, executionPolicy, note: `account execution enabled (limits ${executionLimits.maxDurationSeconds}s/${executionLimits.maxModelTurns} turns)` };
+  const source = envState === 'account' ? 'RELAYCORE_EXECUTION' : 'config.json';
+  return { executor, executionPolicy, note: `account execution enabled via ${source} (limits ${executionLimits.maxDurationSeconds}s/${executionLimits.maxModelTurns} turns)` };
 }
 
 const escapeHtml = (text) => text.replace(/[&<>"']/g, (character) =>

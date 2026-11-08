@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -274,3 +275,40 @@ test('account-route full loop selects the native model before prompting and neve
   }
 });
 
+
+test('runDshReviewTask honors the registryAttach opt-out', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'relaycore-flag-test-'));
+  try {
+    const accountHome = join(root, 'dsh-home');
+    const accountWorkspace = join(root, 'project');
+    await mkdir(join(accountHome, 'storages'), { recursive: true });
+    await mkdir(accountWorkspace);
+    await writeFile(join(accountWorkspace, 'message.txt'), 'pending\n');
+    const registryPath = join(accountHome, 'storages', 'workspace.json');
+    const registryFixture = { unit: { name: 'workspace', version: 2 },
+      global: { initialized: true, defaultWorkspaceId: 'w1', workspaceIds: ['w1'] },
+      tables: { workspaces: { w1: { path: accountWorkspace, title: 'project', sessionIds: [],
+        createdAt: '2026-11-08T00:00:00.000Z', updatedAt: '2026-11-08T00:00:00.000Z' } } } };
+    const writeRegistry = async (value) => writeFileSync(registryPath, JSON.stringify(value, null, 2));
+    writeRegistry(registryFixture);
+    const core = {
+      async verifyWorkspace() { return { workspace: accountWorkspace }; },
+      async applyWorkspaceProposal(id, files) {
+        assert.deepEqual(files, [{ path: 'message.txt', contents: 'ready\n' }]);
+        await writeFile(join(accountWorkspace, 'message.txt'), 'ready\n');
+      },
+      async prepareReviewWorkspace() { return { snapshotId: 'snap-flag', sha256: 'flag-sha' }; },
+      async verifyReviewedWorkspace() { return { snapshotId: 'snap-flag', sha256: 'flag-sha', revision: 1, candidateSha256: 'flag-sha' }; }
+    };
+    const context = { signal: new AbortController().signal };
+    const propose = async () => ({ sessionId: 'session-flag-0001', summary: 'ok', files: [{ path: 'message.txt', contents: 'ready\n' }] });
+    const review = async (input) => ({ verdict: 'approved', packetSha256: input.review.sha256, rationale: 'ok' });
+    const input = { core, task: { id: 'TASK-flag-test', contract: { allowedPaths: ['message.txt'] } }, context,
+      executable: 'unused', accountHome, accountWorkspace, authHome: 'unused' };
+    await runDshReviewTask({ ...input, registryAttach: false }, { propose, review });
+    assert.deepEqual(JSON.parse(readFileSync(registryPath, 'utf8')), registryFixture);
+    await runDshReviewTask({ ...input }, { propose, review });
+    const data = JSON.parse(readFileSync(registryPath, 'utf8'));
+    assert.deepEqual(data.tables.workspaces.w1.sessionIds, ['session-flag-0001']);
+  } finally { await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+});

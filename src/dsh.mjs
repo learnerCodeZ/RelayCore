@@ -107,19 +107,24 @@ export async function runDshProposal({ task, files, home, executable, apiKey, ac
   return { sessionId, summary: proposal.summary, files: proposal.files, ...selection, ...(usage ? { usage } : {}) };
 }
 
-export async function runDshReviewTask({ core, task, context, executable, apiKey, accountHome, accountWorkspace, authHome, model },
-  { propose = runDshProposal, review = runCodexReview, verifyCandidate } = {}) {
-  context.signal.throwIfAborted();
-  // Replay after an in-flight pause: the previous run may have already applied
-  // its proposal to the candidate. Resetting the candidate to the current
-  // source makes the replay idempotent instead of failing on a stale check.
-  let candidate;
+// Resume preparation shared by the production entry and the review task: a
+// workspace whose candidate already carries an applied proposal (the task
+// was paused mid-run) fails the pristine-candidate check. Resetting it to
+// the current source makes the resume idempotent instead of failing before
+// any model call; every other failure propagates unchanged.
+export async function ensureResumeCandidate(core, taskId) {
   try {
-    candidate = await core.verifyWorkspace(task.id);
+    return await core.verifyWorkspace(taskId);
   } catch (error) {
     if (!/Workspace file changed/.test(error.message ?? '')) throw error;
-    candidate = await core.refreshWorkspaceFromSource(task.id);
+    return core.refreshWorkspaceFromSource(taskId);
   }
+}
+
+export async function runDshReviewTask({ core, task, context, executable, apiKey, accountHome, accountWorkspace, authHome, model, registryAttach },
+  { propose = runDshProposal, review = runCodexReview, verifyCandidate } = {}) {
+  context.signal.throwIfAborted();
+  let candidate = await ensureResumeCandidate(core, task.id);
   const decoder = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
   const files = [];
   let bytes = 0;
@@ -144,7 +149,7 @@ export async function runDshReviewTask({ core, task, context, executable, apiKey
   // archive exists by now, so the registry's archive-presence filter passes;
   // a running DSH may drop the entry on its next registry write, and the
   // next dispatch re-attaches idempotently.
-  if (accountHome !== undefined && accountWorkspace !== undefined) {
+  if (accountHome !== undefined && accountWorkspace !== undefined && registryAttach !== false) {
     const registry = attachSessionToDshWorkspace({ dshHome: accountHome, workspacePath: accountWorkspace, sessionId: proposal.sessionId });
     if (!registry.attached) console.warn(`[relaycore] DSH workspace registry attach skipped: ${registry.reason}`);
   }

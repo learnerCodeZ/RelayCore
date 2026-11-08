@@ -1,0 +1,86 @@
+{
+  "reviewDate": "2026-11-08",
+  "scope": "Windows local single-user invitation beta",
+  "baselineCommit": "c8e6b7f3081127d74887504b5dc68fb4753ecf35",
+  "deliveryObservedCommit": "499d7169e771293a749a89e2337e5a72e48e696e",
+  "changesBetweenCommits": ["docs/dsh-plugin-research.md"],
+  "nodeVersion": "v24.15.0",
+  "sourceSha256": {
+    "src/core.mjs": "52894b1fcf5fe1e6c25190d7a045b016710e464c0581ab28f439cefc68864d76",
+    "src/daemon.mjs": "9b6414e02f137036f7411177f24e531e5a7190e2ad3d9397a2c6f4f84e4764e0",
+    "src/dsh.mjs": "9d4c35964513ee8d97a7fd317ddcdfbc5ff6948e8b25eb552e20815cdb563fc4",
+    "src/dsh-workspace.mjs": "6b3475e0519a48071e4fc76877f1716ba93ea78db43f9708daa315b4f6ebd99c"
+  },
+  "regression": {
+    "command": "node --test --test-reporter=tap --test-timeout=12000",
+    "startedAt": "2026-11-08T12:20:15.057Z",
+    "finishedAt": "2026-11-08T12:20:37.035Z",
+    "exitCode": 0,
+    "tests": 156,
+    "passed": 156,
+    "failed": 0,
+    "skipped": 0,
+    "cancelled": 0,
+    "durationMs": 21851.5695
+  },
+  "dependencyAudit": {
+    "command": "npm audit --omit=dev --json --ignore-scripts",
+    "exitCode": 0,
+    "knownVulnerabilitiesReported": 0,
+    "limitation": "Registry advisory result at review time, not proof of absence of vulnerabilities."
+  },
+  "workflowReproduction": {
+    "command": "node docs/release-review-2026-11-08/workflow-repro.mjs .",
+    "exitCode": 0,
+    "concurrentIntegration": {
+      "iterations": 12,
+      "lostUpdateReproduced": 11,
+      "firstObservedFinalContents": "one\n",
+      "successfulIntegrationEventsForEachTask": [1, 1],
+      "limitation": "Scheduling sample, not an estimate of production failure probability."
+    },
+    "interruptedRollback": {
+      "method": "Interrupted disk/journal state simulation, not a real power-cut test",
+      "stateAfterRestart": "COMPLETED",
+      "fileContents": ["before-a", "after-b"],
+      "retryError": "Source changed after integration; rollback refused: a.txt"
+    },
+    "productionResumeAfterAppliedProposal": {
+      "pausedState": "PAUSED",
+      "afterResume": "RECOVERY_REQUIRED",
+      "failure": "Workspace file changed: message.txt",
+      "failedBeforeRealModelOrExecutable": true
+    }
+  },
+  "securityReproduction": {
+    "command": "node docs/release-review-2026-11-08/security-repro.mjs .",
+    "exitCode": 0,
+    "environmentDisable": {
+      "environmentValue": "disabled",
+      "configExecution": "account",
+      "executorEnabled": true,
+      "bugReproduced": true
+    },
+    "registryLostUpdate": {
+      "method": "Controlled interleaving of a simulated DSH write between snapshot read and replacement",
+      "attachSucceeded": true,
+      "concurrentWorkspacePreserved": false,
+      "relaycoreSessionAdded": true,
+      "bugReproduced": true
+    }
+  },
+  "realModelsCalled": false,
+  "realTasksModified": false,
+  "realDshDataModified": false,
+  "productSourceModifiedByReview": false,
+  "notTested": [
+    "clean Windows new-user installation",
+    "real power loss or storage corruption",
+    "multi-day endurance",
+    "upstream DSH upgrade compatibility",
+    "remote cancellation and billing reconciliation",
+    "large session archive stress",
+    "malicious local process attacks",
+    "independent full penetration test"
+  ]
+}

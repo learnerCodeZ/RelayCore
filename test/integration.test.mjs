@@ -233,3 +233,62 @@ test('a mixed crash site goes to RECOVERY_REQUIRED for a human instead of being 
     assert.deepEqual(state.core.events(task.id).filter((event) => event.kind === 'integration.reconciliation_required').length, 1);
   });
 });
+
+test('concurrent integration of two tasks sharing a source file serializes and refuses the loser', async () => {
+  await withCore(async (state) => {
+    // Both tasks registered the same source baseline (pending\n) with
+    // different candidates; the project-wide write lock serializes the two
+    // integrations, so the second one hits the changed source and fails its
+    // baseline check instead of silently overwriting the first result.
+    const first = await completedTask(state, { candidate: 'ready-a\n' });
+    const second = await completedTask(state, { candidate: 'ready-b\n' });
+    const results = await Promise.allSettled([
+      state.core.integrateWorkspace(first.task.id, first.snapshot.snapshotId),
+      state.core.integrateWorkspace(second.task.id, second.snapshot.snapshotId)
+    ]);
+    assert.deepEqual(results.map((entry) => entry.status), ['fulfilled', 'rejected']);
+    assert.match(results[1].reason.message, /Source conflict after review snapshot/);
+    assert.equal(await readFile(join(state.root, 'message.txt'), 'utf8'), 'ready-a\n');
+    const completions = state.core.events(first.task.id).filter((entry) => entry.kind === 'integration.completed').length +
+      state.core.events(second.task.id).filter((entry) => entry.kind === 'integration.completed').length;
+    assert.equal(completions, 1);
+  });
+});
+
+test('an interrupted rollback reconciles from disk on restart', async () => {
+  await withCore(async (state) => {
+    const { task, snapshot } = await completedTask(state);
+    await state.core.integrateWorkspace(task.id, snapshot.snapshotId);
+    // Simulate a forced kill after the rollback restored the file but before
+    // it journaled the terminal event.
+    state.core.close();
+    state.core = undefined;
+    const database = new DatabaseSync(join(state.root, '.RelayCore', 'bridge', 'state.sqlite'));
+    try {
+      database.prepare("INSERT INTO events(task_id,kind,created_at) VALUES(?,?,datetime('now'))").run(task.id, 'integration.rollback_started');
+      await writeFile(join(state.root, 'message.txt'), 'pending\n');
+    } finally { database.close(); }
+    state.core = await openCore(state.root);
+    assert.equal(state.core.get(task.id).state, 'COMPLETED');
+    assert.equal(state.core.events(task.id).filter((entry) => entry.kind === 'integration.rolled_back').length, 1);
+  });
+});
+
+test('a rollback interrupted mid-restore reconciles to RECOVERY_REQUIRED', async () => {
+  await withCore(async (state) => {
+    const { task, snapshot } = await completedTask(state);
+    await state.core.integrateWorkspace(task.id, snapshot.snapshotId);
+    // Simulate a forced kill between the first and second file restore: the
+    // tree no longer matches before or after hashes as a whole.
+    state.core.close();
+    state.core = undefined;
+    const database = new DatabaseSync(join(state.root, '.RelayCore', 'bridge', 'state.sqlite'));
+    try {
+      database.prepare("INSERT INTO events(task_id,kind,created_at) VALUES(?,?,datetime('now'))").run(task.id, 'integration.rollback_started');
+      await writeFile(join(state.root, 'message.txt'), 'tampered\n');
+    } finally { database.close(); }
+    state.core = await openCore(state.root);
+    assert.equal(state.core.get(task.id).state, 'RECOVERY_REQUIRED');
+    assert.equal(state.core.events(task.id).filter((entry) => entry.kind === 'integration.reconciliation_required').length, 1);
+  });
+});

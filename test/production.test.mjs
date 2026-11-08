@@ -291,3 +291,43 @@ test('the DSH session archive of a dispatched task renders as a readable convers
     }
   });
 });
+
+test('production resume tolerates an applied-proposal candidate via the shared helper', async () => {
+  try {
+    process.env.RELAYCORE_EXECUTION = 'account';
+    process.env.RELAYCORE_DSH_EXE = 'D:/DeepSeekHarness/DeepSeek Harness.exe';
+    process.env.RELAYCORE_ACCOUNT_WORKSPACE = 'D:/MYCODE/RCtest';
+    const execution = productionExecution('/somewhere');
+    const calls = [];
+    const task = { id: 'TASK-resume-applied' };
+    const core = {
+      async workspaceInventory() { return { registered: [{ taskId: task.id, kind: 'copy', present: true }] }; },
+      async verifyWorkspace() { calls.push('verify'); throw new Error('Workspace file changed'); },
+      async refreshWorkspaceFromSource() { calls.push('refresh'); },
+      async inspectSourceConflicts() { calls.push('source'); return { matchesBaseline: false }; }
+    };
+    await assert.rejects(execution.executor(task, { signal: new AbortController().signal }, core), /Source changed before execution/);
+    assert.deepEqual(calls, ['verify', 'refresh', 'source']);
+  } finally { restoreEnv(); }
+});
+
+test('an explicit RELAYCORE_EXECUTION decides on/off regardless of the config file', () => {
+  try {
+    process.env.RELAYCORE_EXECUTION = 'off';
+    const forcedOff = productionExecution('/somewhere',
+      { execution: 'account', dshExe: 'D:/DeepSeekHarness/DeepSeek Harness.exe', accountWorkspace: 'D:/MYCODE/RCtest' });
+    assert.equal(forcedOff.executor, null);
+    assert.match(forcedOff.note, /RELAYCORE_EXECUTION=off/);
+    process.env.RELAYCORE_EXECUTION = 'account';
+    const forcedOn = productionExecution('/somewhere',
+      { execution: 'off', dshExe: 'D:/DeepSeekHarness/DeepSeek Harness.exe', accountWorkspace: 'D:/MYCODE/RCtest' });
+    assert.equal(typeof forcedOn.executor, 'function');
+    assert.match(forcedOn.note, /via RELAYCORE_EXECUTION/);
+    process.env.RELAYCORE_EXECUTION = 'nonsense';
+    assert.throws(() => productionExecution('/somewhere', {}), /accepts/);
+    delete process.env.RELAYCORE_EXECUTION;
+    const viaConfig = productionExecution('/somewhere',
+      { execution: 'account', dshExe: 'D:/DeepSeekHarness/DeepSeek Harness.exe', accountWorkspace: 'D:/MYCODE/RCtest' });
+    assert.match(viaConfig.note, /via config\.json/);
+  } finally { restoreEnv(); }
+});

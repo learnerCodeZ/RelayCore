@@ -17,7 +17,7 @@ RelayCore 计划作为 Windows 本地优先的双 Agent 协作工具：Codex 负
 | 4 | 共享知识、预算、网页与安装 | 核心已实现并修复已知缺陷；真实记账、控制台身份边界与诊断配置一致性待验收 |
 | 5 | 端到端测试与发布准备 | 进行中：双语、安全和贡献文档已补；准入和发布验证未完成 |
 
-Phase 0 的实测结果和未通过项见 [可行性记录](docs/phase-0-feasibility.md)；Phase 1 的验收范围见 [阶段一状态](docs/phase-1-status.md)；当前增量见 [阶段二状态](docs/phase-2-status.md)、[阶段三状态](docs/phase-3-status.md) 和 [阶段五状态](docs/phase-5-status.md)；详细设计见 [项目架构与开发计划书](docs/RelayCore%20项目架构与开发计划书.md)。阶段完成不代表所有后续安全能力已具备。
+Phase 0 的实测结果和未通过项见 [可行性记录](docs/phase-0-feasibility.md)；Phase 1 的验收范围见 [阶段一状态](docs/phase-1-status.md)；当前增量见 [阶段二状态](docs/phase-2-status.md)、[阶段三状态](docs/phase-3-status.md) 和 [阶段五状态](docs/phase-5-status.md)；详细设计见 [DSH 任务接入](docs/dsh-integration.md) 与 [Codex 审查](docs/codex-review.md)。阶段完成不代表所有后续安全能力已具备。
 
 ## 运行当前控制骨架
 
@@ -99,7 +99,7 @@ try {
 
 **日常使用只需一条命令**：在项目目录运行 `npm start`。
 
-- **首次使用**：终端会打印一条"控制台配对链接"并自动打开浏览器（10 分钟内点击有效、一次性）。登录后控制台顶部有"首次设置"表单——填写 DSH 可执行文件路径与 DSH 账户工作区并保存（配置写入 `.RelayCore/bridge/config.json`，不含任何密钥），然后关闭程序重新运行 `npm start`——Daemon 将以执行模式启动，再次点击终端里的新配对链接即可。
+- **首次使用**：终端会打印一条"控制台配对链接"（10 分钟内点击有效、一次性）；设 `RELAYCORE_OPEN=1` 时自动打开浏览器。登录后控制台顶部有"首次设置"表单——填写 DSH 可执行文件路径与 DSH 账户工作区并保存（配置写入 `.RelayCore/bridge/config.json`，不含任何密钥），然后关闭程序重新运行 `npm start`——Daemon 将以执行模式启动，再次点击终端里的新配对链接即可。**真实派发前还需初始化 Codex 审查登录**：运行 `npm run login:review`，按提示完成一次 Codex 登录（独立审查通道的必要条件）。
 - **日常操作全部在网页里**：新建任务（标题/目标/验收/允许路径）→ 展开授权并逐项勾选（同意未知费用；E2 任务另需 L3 同意）→ 派发 → 运行中可暂停/恢复/停止/追加引导 → 完成后点"整合"（自动使用最新审查快照，无需手动找 ID）→ 需要撤销时点"回滚"。以上全部操作均可在网页内完成，无需命令行。"用量分账"页面分开展示 DSH 上下文占用与 Codex 输入/输出 tokens。
 - **环境变量仍可覆盖配置**：`RELAYCORE_ROOT`（项目根，默认当前目录）、`RELAYCORE_PORT`（默认 8765）、`RELAYCORE_MAX_DURATION`/`RELAYCORE_MAX_TURNS`、`RELAYCORE_REVIEW_AUTH_HOME`；`RELAYCORE_EXECUTION=account` 与 `RELAYCORE_DSH_EXE`/`RELAYCORE_ACCOUNT_WORKSPACE` 优先于 config.json。终端只打印配对链接，**不自动弹出浏览器**；需要自动打开时设 `RELAYCORE_OPEN=1`。
 - **登录的其他方式**：配对链接过期后，在运行 Daemon 的终端执行 `node src/control.mjs ui-session` 获取一次性令牌手动登录；CLI 仍支持完整操作（create/authorize/dispatch/integrate/rollback 等）。

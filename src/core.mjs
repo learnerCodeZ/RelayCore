@@ -821,17 +821,18 @@ export async function openCore(root, executor = null, executionPolicy) {
   };
   const integrationManifestPath = (id) => join(taskDir, id, 'PRE-INTEGRATION', 'manifest.json');
   // Integration and rollback mutate the project source tree; running two of
-  // them concurrently on one task would race the checks-then-write windows
-  // against each other. One in-process lock per task serializes them (the
-  // single-daemon assumption is what makes an in-process lock sufficient).
-  const integrationLocks = new Map();
-  const withIntegrationLock = (id, action) => {
-    const previous = integrationLocks.get(id) ?? Promise.resolve();
-    const next = previous.then(action, action);
-    integrationLocks.set(id, next.catch(() => {}));
+  // them concurrently — even on different tasks — races the checks-then-write
+  // windows against each other (two tasks sharing a source file can otherwise
+  // both report success while one write overwrites the other). One project
+  // -wide in-process lock serializes them (the single-daemon assumption is
+  // what makes an in-process lock sufficient).
+  let sourceWriteTail = Promise.resolve();
+  const withSourceWriteLock = (action) => {
+    const next = sourceWriteTail.then(action, action);
+    sourceWriteTail = next.catch(() => {});
     return next;
   };
-  const integrateWorkspace = async (id, snapshotId) => withIntegrationLock(id, async () => {
+  const integrateWorkspace = async (id, snapshotId) => withSourceWriteLock(async () => {
     const task = get(id);
     if (task.state !== 'COMPLETED') throw new Error(`Only a completed task can integrate; ${task.state} must reconcile first`);
     if (await lstat(integrationManifestPath(id)).then(() => true, (error) => {
@@ -902,7 +903,7 @@ export async function openCore(root, executor = null, executionPolicy) {
     transaction(database, () => { event(id, 'integration.completed'); });
     return { integrated: true, taskId: id, snapshotId, files: written, manifestSha256: createHash('sha256').update(JSON.stringify(manifest)).digest('hex') };
   });
-  const rollbackIntegration = async (id) => withIntegrationLock(id, async () => {
+  const rollbackIntegration = async (id) => withSourceWriteLock(async () => {
     const task = get(id);
     if (task.state !== 'COMPLETED') throw new Error(`Only a completed task can roll back; ${task.state} must reconcile first`);
     if (database.prepare("SELECT 1 FROM events WHERE task_id=? AND kind='integration.rolled_back'").get(id)) {
@@ -926,6 +927,11 @@ export async function openCore(root, executor = null, executionPolicy) {
         throw new Error(`Integration backup changed; rollback refused: ${file.path}`);
       }
     }
+    // Persist the rollback intent before touching any file: a forced kill
+    // mid-restore leaves a mixed tree with no catch handler, and the startup
+    // reconciliation needs this marker to tell an interrupted rollback from
+    // an interrupted integration.
+    transaction(database, () => { event(id, 'integration.rollback_started'); });
     const restored = [];
     try {
       for (const file of manifest.files) {
@@ -1234,8 +1240,15 @@ export async function openCore(root, executor = null, executionPolicy) {
       throw error;
     });
     if (!manifestExists) continue;
-    const hasJournal = database.prepare("SELECT 1 FROM events WHERE task_id=? AND kind IN ('integration.completed','integration.rolled_back','integration.failed','integration.rollback_failed')").get(id);
-    if (hasJournal) continue;
+    const rolledBack = database.prepare("SELECT 1 FROM events WHERE task_id=? AND kind='integration.rolled_back'").get(id);
+    const rollbackStarted = database.prepare("SELECT 1 FROM events WHERE task_id=? AND kind='integration.rollback_started'").get(id);
+    const completed = database.prepare("SELECT 1 FROM events WHERE task_id=? AND kind='integration.completed'").get(id);
+    // Settled states need no reconciliation: the rollback journaled its
+    // terminal event, or the task has a completed integration and no rollback
+    // ever started. A dangling rollback_started (forced kill mid-restore,
+    // before any catch handler) must reconcile even though the integration
+    // event exists — that is exactly the mixed-tree case this pass exists for.
+    if (rolledBack || (completed && !rollbackStarted)) continue;
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     const states = [];
     for (const file of manifest.files) {
@@ -1247,10 +1260,19 @@ export async function openCore(root, executor = null, executionPolicy) {
     }
     transaction(database, () => {
       if (states.every((state) => state === 'after')) {
+        // Either the integration finished without journaling, or an
+        // interrupted rollback crashed before its first file write; the
+        // integration stands either way.
         event(id, 'integration.completed');
       } else if (states.every((state) => state === 'before')) {
-        // Nothing was written; the site is clean for a deliberate re-integration.
-        event(id, 'integration.reconciliation_required');
+        if (rollbackStarted) {
+          // The rollback restored every file but crashed before journaling
+          // the terminal event.
+          event(id, 'integration.rolled_back');
+        } else {
+          // Nothing was written; the site is clean for a deliberate re-integration.
+          event(id, 'integration.reconciliation_required');
+        }
       } else {
         // Partially written or tampered: only a human can decide what to keep.
         database.prepare("UPDATE tasks SET state='RECOVERY_REQUIRED',updated_at=? WHERE id=? AND state='COMPLETED'").run(now(), id);
